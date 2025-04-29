@@ -27,6 +27,7 @@
     "pino",
     "bunyan"
   ],
+  
   "author": "Twoje Imię <twoj.email@example.com>",
   "license": "MIT",
   "devDependencies": {
@@ -42,7 +43,15 @@
     "ts-jest": "^29.1.2",
     "typescript": "^5.3.3"
   },
-  "engines": {
-    "node": ">=16.0.0" 
-  }
-}
+    "repository": {
+      "type": "git",
+      "url": "git+https://github.com/tolongames/scribelog.git" 
+    },
+    "bugs": {
+      "url": "https://github.com/tolongames/scribelog/issues" 
+    },
+    "homepage": "https://github.com/tolongames/scribelog#readme", 
+    "engines": {
+      "node": ">=16.0.0"
+    }
+  } 
