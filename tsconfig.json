@@ -1,0 +1,17 @@
+// tsconfig.json
+{
+    "compilerOptions": {
+      "target": "ES2016", // Celujemy w dość nowoczesny JS, ale kompatybilny
+      "module": "CommonJS", // Standardowy system modułów dla Node.js
+      "outDir": "./dist", // Gdzie trafi skompilowany kod JS
+      "rootDir": "./src", // Gdzie znajduje się nasz kod źródłowy TS
+      "strict": true, // Włączamy wszystkie ścisłe sprawdzania typów - dobra praktyka!
+      "esModuleInterop": true, // Umożliwia lepszą współpracę z modułami CommonJS
+      "skipLibCheck": true, // Przyspiesza kompilację, pomijając sprawdzanie typów w plikach .d.ts z node_modules
+      "forceConsistentCasingInFileNames": true, // Wymusza spójną wielkość liter w nazwach plików
+      "declaration": true, // Generuj pliki .d.ts (definicje typów dla użytkowników)
+      "sourceMap": true // Generuj source mapy dla łatwiejszego debugowania
+    },
+    "include": ["src/**/*"], // Jakie pliki kompilować
+    "exclude": ["node_modules", "dist", "test"] // Jakich plików nie kompilować
+  }
