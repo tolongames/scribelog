@@ -111,7 +111,7 @@ Create and configure your logger using `createLogger(options?: LoggerOptions)`.
 import { createLogger, format, transports } from 'scribelog';
 
 const prodLogger = createLogger({
-  level: process.env.LOG_LEVEL || 'info', // Read level from environment or default to info
+  level: 'info', // Read level from environment or default to info
   format: format.defaultJsonFormat,      // Use predefined JSON format
   transports: [
     new transports.Console({
