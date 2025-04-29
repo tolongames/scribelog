@@ -17,5 +17,26 @@
     "rules": {
       // Tutaj można dodać własne reguły lub nadpisać istniejące
       "@typescript-eslint/no-unused-vars": ["warn", { "argsIgnorePattern": "^_" }] // Ostrzegaj o nieużywanych zmiennych (chyba że zaczynają się od _)
-    }
+      // Nie wyłączamy 'no-explicit-any' globalnie
+    },
+    "overrides": [
+      {
+        // Stosuj te reguły tylko do plików pasujących do wzorca testowego
+        "files": ["test/**/*.ts", "*.test.ts", "*.spec.ts"],
+        // Wyłącz regułę 'no-explicit-any' dla plików testowych
+        "rules": {
+          "@typescript-eslint/no-explicit-any": "off"
+        }
+      },
+      // --- POCZĄTEK DODANEGO BLOKU ---
+      {
+        // Stosuj te reguły tylko do plików pasujących do wzorca src
+        "files": ["src/**/*.ts"],
+        // Wyłącz regułę 'no-explicit-any' dla plików źródłowych
+        "rules": {
+          "@typescript-eslint/no-explicit-any": "off"
+        }
+      }
+      // --- KONIEC DODANEGO BLOKU ---
+    ]
   }
