@@ -1,0 +1,32 @@
+# .github/workflows/node.js.yml
+name: Node.js CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        node-version: [16.x, 18.x, 20.x] # Testuj na różnych wersjach Node
+
+    steps:
+    - uses: actions/checkout@v4 # Pobiera kod repozytorium
+    - name: Use Node.js ${{ matrix.node-version }}
+      uses: actions/setup-node@v4 # Konfiguruje Node.js
+      with:
+        node-version: ${{ matrix.node-version }}
+        cache: 'npm' # Włącza cache'owanie npm dla szybszych buildów
+    - name: Install dependencies
+      run: npm ci # Użyj 'ci' zamiast 'install' dla powtarzalnych buildów
+    - name: Lint code
+      run: npm run lint
+    - name: Run tests
+      run: npm test
+    - name: Build project
+      run: npm run build
