@@ -1,8 +1,8 @@
 # Scribelog 🪵📝
 
-[![npm version](https://img.shields.io/npm/v/scribelog.svg)](https://www.npmjs.com/package/scribelog) <!-- This should update automatically -->
+[![npm version](https://img.shields.io/npm/v/scribelog.svg)](https://www.npmjs.com/package/scribelog)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Build Status](https://github.com/tolongames/scribelog/actions/workflows/node.js.yml/badge.svg)](https://github.com/tolongames/scribelog/actions/workflows/node.js.yml) <!-- Add your GitHub Actions badge URL -->
+[![Build Status](https://github.com/tolongames/scribelog/actions/workflows/node.js.yml/badge.svg)](https://github.com/tolongames/scribelog/actions/workflows/node.js.yml)
 <!-- Add other badges if you have them (e.g., coverage) -->
 
 **Scribelog** is an advanced, highly configurable logging library for Node.js applications, written in TypeScript. It offers flexible formatting, support for multiple destinations (transports), child loggers, and automatic error catching, aiming for a great developer experience.
@@ -36,40 +36,56 @@ pnpm add scribelog
 ## 🚀 Basic Usage
 
 ```ts
-import { createLogger } from 'scribelog';
+// Import necessary functions and types
+import { createLogger, format, transports } from 'scribelog';
 
 // Create a logger with default settings:
 // - Level: 'info'
-// - Format: Simple, colored output to console
+// - Format: Simple, colored output to console (defaultSimpleFormat)
 // - Transport: Console
 const logger = createLogger();
 
 // Log messages at different levels
 logger.info('Application started successfully.');
-logger.warn('Warning: Cache memory usage high.', { usage: '85%' });
+logger.warn('Warning: Cache memory usage high.', { usage: '85%' }); // Add metadata
 
-// Pass an Error object directly or in metadata
+// --- Correct way to log Errors ---
+// Pass a message string as the first argument,
+// and the Error object in the metadata (typically under the 'error' key).
+// The `format.errors()` formatter (included in defaults) will handle it.
 const dbError = new Error('Database connection timeout');
-(dbError as any).code = 'DB_TIMEOUT'; // Add custom properties
-logger.error(dbError); // Logs the error message and stack trace
+(dbError as any).code = 'DB_TIMEOUT'; // You can add custom properties to errors
+logger.error('Database Error Occurred', { error: dbError });
+
 logger.info('Operation completed', { user: 'admin', durationMs: 120 });
 
-// Debug logs won't appear by default (level 'info')
+// Debug logs won't appear with the default 'info' level
 logger.debug('Detailed step for debugging.');
+
+// --- Example with JSON format and debug level ---
+const jsonLogger = createLogger({
+  level: 'debug', // Log 'debug' and higher levels
+  format: format.defaultJsonFormat, // Use predefined JSON format (includes errors, timestamp, etc.)
+});
+
+jsonLogger.debug('Debugging operation X', { operationId: 'op-xyz' });
+// Example JSON Output:
+// {"level":"debug","message":"Debugging operation X","timestamp":"...ISO_STRING...","operationId":"op-xyz"}
 ```
 
-**Example Output (Simple Format with Colors):**
+**Example Output (Default Simple Format with Colors):**
 
 ```bash
 # (Timestamp will be gray, [INFO] green, [WARN] yellow, [ERROR] red)
 2024-05-01T10:00:00.123Z [INFO]: Application started successfully.
 2024-05-01T10:00:01.456Z [WARN]: Warning: Cache memory usage high. { usage: '85%' }
-2024-05-01T10:00:02.789Z [ERROR]: Database connection timeout { errorName: 'Error', code: 'DB_TIMEOUT' }
+2024-05-01T10:00:02.789Z [ERROR]: Database connection timeout { exception: true, eventType: undefined, errorName: 'Error', code: 'DB_TIMEOUT' }
 Error: Database connection timeout
     at <anonymous>:10:17
     ... (stack trace) ...
 2024-05-01T10:00:03.111Z [INFO]: Operation completed { user: 'admin', durationMs: 120 }
 ```
+*(Note: `eventType` is undefined here because the error wasn't logged via `handleExceptions`/`handleRejections`)*
 
 ---
 
@@ -95,28 +111,35 @@ Create and configure your logger using `createLogger(options?: LoggerOptions)`.
 import { createLogger, format, transports } from 'scribelog';
 
 const prodLogger = createLogger({
-  level: 'info', // Only log info and above in production
-  format: format.defaultJsonFormat, // Use the predefined JSON format
+  level: process.env.LOG_LEVEL || 'info', // Read level from environment or default to info
+  format: format.defaultJsonFormat,      // Use predefined JSON format
   transports: [
     new transports.Console({
-      // Console specific options can go here if needed
-      // e.g., level: 'info' (though logger level already covers this)
+      // Console specific options if needed
     }),
-    // In the future, you might add a FileTransport here:
-    // new transports.File({ filename: 'app.log', level: 'warn' })
+    // Future: new transports.File({ filename: '/var/log/app.log', level: 'warn' })
   ],
   defaultMeta: {
-    environment: 'production',
-    region: process.env.AWS_REGION || 'unknown',
+    service: 'my-prod-service',
+    pid: process.pid,
+    // You can add more static metadata here
   },
-  // Handle critical errors in production
-  handleExceptions: true,
-  handleRejections: true,
-  // exitOnError: true // Default is true, ensures app exits on fatal errors
+  handleExceptions: true, // Recommended for production
+  handleRejections: true, // Recommended for production
+  // exitOnError: true    // Default, recommended for production
 });
 
 prodLogger.info('Production logger initialized.');
-prodLogger.error(new Error('Critical configuration error!'));
+try {
+  // Simulate an operation that might fail
+  throw new Error('Critical configuration error!');
+} catch (error) {
+  // Log the caught error correctly
+  prodLogger.error('Failed to apply configuration', { error: error as Error });
+}
+
+// Example of an unhandled rejection that would be caught if not caught here
+// Promise.reject('Something failed asynchronously');
 ```
 
 ---
@@ -126,13 +149,7 @@ prodLogger.error(new Error('Critical configuration error!'));
 Scribelog uses standard `npm` logging levels (ordered from most to least severe):
 
 ```text
-error: 0
-warn: 1
-info: 2
-http: 3
-verbose: 4
-debug: 5
-silly: 6
+error: 0, warn: 1, info: 2, http: 3, verbose: 4, debug: 5, silly: 6
 ```
 
 Setting the `level` option filters messages *at or above* the specified severity. `level: 'info'` logs `info`, `warn`, and `error`. `level: 'debug'` logs everything.
@@ -144,7 +161,7 @@ Setting the `level` option filters messages *at or above* the specified severity
 Formatters transform the log `info` object before it reaches transports. Use `format.combine(...)` to chain them.
 
 **How it Works:**
-`createLogger` -> `log()`/`logEntry()` -> Creates `LogInfo` object -> Passes to `format` function -> `format` function applies its chain -> Result (string or object) passed to `transport.log()`.
+`createLogger` -> `log()`/`logEntry()` -> Creates `LogInfo` object -> Passes to `format` function -> `format` function applies its chain (`combine`) -> Result (string or object) passed to `transport.log()`.
 
 ### Available Formatters
 
@@ -152,60 +169,66 @@ Formatters transform the log `info` object before it reaches transports. Use `fo
     *   `alias?: string`: Key for the formatted timestamp (default: `'timestamp'`).
     *   `format?: string | ((date: Date) => string)`: `date-fns` format string or custom function (default: ISO 8601).
     ```ts
-    format.timestamp({ format: 'yyyy-MM-dd HH:mm:ss' }) // -> '2024-05-01 10:30:00'
-    format.timestamp({ alias: '@timestamp' }) // -> Adds {'@timestamp': '...'}
+    format.timestamp({ format: 'yyyy-MM-dd HH:mm:ss' }) // -> Adds { timestamp: '2024-05-01 10:30:00' }
+    format.timestamp({ alias: '@timestamp' })          // -> Adds { '@timestamp': '...ISO...' }
     ```
 *   **`format.level(options?)`**: Adds the log level string.
     *   `alias?: string`: Key for the level (default: `'level'`).
 *   **`format.message(options?)`**: Adds the log message string.
     *   `alias?: string`: Key for the message (default: `'message'`).
-*   **`format.errors(options?)`**: Extracts info from an `Error` object (expected at `info.error`). Adds `errorName`, `stack?`, `originalReason?` and potentially other error properties. Sets `info.message` to `error.message` if `info.message` was empty. Removes the original `info.error`.
+*   **`format.errors(options?)`**: Extracts info from an `Error` object (expected at `info.error`). Adds `errorName`, `stack?`, `originalReason?` and potentially other error properties to the `info` object. Sets `info.message` to `error.message` if `info.message` was empty. Removes the original `info.error` field. **Place this early in your `combine` chain.**
     *   `stack?: boolean`: Include stack trace (default: `true`).
-*   **`format.metadata(options?)`**: Gathers all remaining properties into the main object or under an alias. Excludes standard fields (`level`, `message`, `timestamp`, etc.) and error fields (`stack`, `errorName`, etc.).
-    *   `alias?: string`: If provided, nest metadata under this key.
-    *   `exclude?: string[]`: Array of additional keys to exclude from metadata.
+*   **`format.metadata(options?)`**: Gathers all remaining properties into the main object or under an alias. Excludes standard fields added by other formatters (`level`, `message`, `timestamp`, `errorName`, `stack`, `exception`, `eventType` etc.).
+    *   `alias?: string`: If provided, nest metadata under this key and remove original keys.
+    *   `exclude?: string[]`: Array of additional keys to exclude from metadata collection.
 *   **`format.json(options?)`**: **Terminal Formatter.** Serializes the final `info` object to a JSON string.
     *   `space?: string | number`: Pretty-printing spaces for `JSON.stringify`.
-*   **`format.simple(options?)`**: **Terminal Formatter.** Creates a human-readable, colored (if TTY) string. Includes `timestamp`, `level`, `message`, `{ metadata }`, and `stack` (on a new line).
-    *   `colors?: boolean`: Force colors on or off (default: auto-detect).
+*   **`format.simple(options?)`**: **Terminal Formatter.** Creates a human-readable, colored (if TTY) string. Includes `timestamp`, `level`, `message`, `{ metadata }`, and `stack` (on a new line if present).
+    *   `colors?: boolean`: Force colors on or off (default: auto-detect based on TTY).
 
 ### Combining Formatters (`format.combine`)
 
-The order matters! Formatters run sequentially, modifying the `info` object. Terminal formatters (`json`, `simple`) should usually be last.
+The order matters! Formatters run sequentially. Terminal formatters (`json`, `simple`) should be last.
 
 ```ts
 import { createLogger, format } from 'scribelog';
 
-// Example: Log only level, message, and custom timestamp
+// Example: Log only level, message, and custom timestamp in simple format
 const minimalFormat = format.combine(
+    // Note: errors() is not included here
     format.timestamp({ format: 'HH:mm:ss.SSS' }),
     format.level(),
     format.message(),
-    // No metadata() or errors()
-    format.simple() // Simple will only use timestamp, level, message
+    // No metadata() - ignores other fields like { extra: '...' }
+    format.simple() // simple() will only use timestamp, level, message
 );
 const minimalLogger = createLogger({ format: minimalFormat });
-minimalLogger.info('Minimal log', { extra: 'this will be ignored'});
+minimalLogger.info('Minimal log', { extra: 'this is ignored'});
 // Output: 10:45:00.123 [INFO]: Minimal log
 
 // Example: JSON output with specific fields and nested metadata
 const customJsonFormat = format.combine(
-    format.errors({ stack: false }), // Include basic error info, no stack
-    format.timestamp({ alias: '@ts' }),
-    format.level({ alias: 'severity' }),
-    format.message(),
-    format.metadata({ alias: 'data' }), // Nest other data under 'data'
-    format.json()
+    format.errors({ stack: false }),       // Include basic error info, no stack
+    format.timestamp({ alias: '@ts' }),    // Rename timestamp field
+    format.level({ alias: 'severity' }), // Rename level field
+    format.message(),                      // Keep message field
+    format.metadata({ alias: 'data' }),    // Nest other data under 'data'
+    format.json()                          // Output as JSON
 );
 const customJsonLogger = createLogger({ format: customJsonFormat });
 customJsonLogger.warn('Warning with nested meta', { user: 'test', id: 1 });
 // Output: {"@ts":"...","severity":"warn","message":"Warning with nested meta","data":{"user":"test","id":1}}
+
+const errorExample = new Error("Failed task");
+(errorExample as any).details = { code: 500 };
+customJsonLogger.error("Task failed", { error: errorExample });
+// Output: {"@ts":"...", "severity":"error", "message":"Failed task", "errorName":"Error", "originalReason":undefined, "data":{"details":{"code":500}}}
 ```
 
 ### Predefined Formats
 
-*   `format.defaultSimpleFormat`: Equivalent to `combine(errors(), timestamp(), level(), message(), metadata(), simple())`. **This is the default format for `createLogger`.**
-*   `format.defaultJsonFormat`: Equivalent to `combine(errors(), timestamp(), level(), message(), metadata(), json())`.
+*   `format.defaultSimpleFormat`: Equivalent to `combine(errors({ stack: true }), timestamp(), level(), message(), metadata(), simple())`. **This is the default format for `createLogger`.**
+*   `format.defaultJsonFormat`: Equivalent to `combine(errors({ stack: true }), timestamp(), level(), message(), metadata(), json())`.
 
 ---
 
@@ -217,7 +240,7 @@ Define log destinations. You can use multiple transports.
 
 Logs to `process.stdout` or `process.stderr`.
 
-*   `level?: string`: Minimum level for this specific transport. Overrides the logger's level if more restrictive (e.g., logger 'debug', transport 'info' -> transport logs 'info' and above).
+*   `level?: string`: Minimum level for this specific transport. Filters logs *after* the main logger level filter.
 *   `format?: LogFormat`: Specific format for this transport. Overrides the logger's format.
 *   `useStdErrLevels?: string[]`: Array of levels to direct to `stderr` (default: `['error']`).
 
@@ -227,27 +250,27 @@ Logs to `process.stdout` or `process.stderr`.
 import { createLogger, format, transports } from 'scribelog';
 
 const logger = createLogger({
-  level: 'info', // Logger handles info and above
+  level: 'info', // Logger allows info, warn, error
   transports: [
     // Log INFO and WARN to stdout using simple format
     new transports.Console({
-      level: 'warn', // Catches info and warn from logger
+      level: 'warn', // Only logs warn and error passed from logger
       format: format.simple({ colors: true }),
-      useStdErrLevels: [], // Ensure nothing goes to stderr from here
+      useStdErrLevels: [], // Nothing from here goes to stderr
     }),
     // Log only ERRORs to stderr using JSON format
     new transports.Console({
-      level: 'error', // Catches only error from logger
-      format: format.json(),
-      useStdErrLevels: ['error'] // Explicitly send errors to stderr
+      level: 'error', // Only logs error passed from logger
+      format: format.json(), // Use JSON for errors
+      useStdErrLevels: ['error'] // Ensure errors go to stderr
     })
   ]
 });
 
-logger.info('User logged in');   // Goes to first console (stdout, simple)
+logger.info('User logged in');   // Filtered out by the first transport's level ('warn')
 logger.warn('Disk space low');  // Goes to first console (stdout, simple)
-logger.error(new Error('DB Error')); // Goes to BOTH (stdout simple, stderr JSON)
-logger.debug('Should not appear'); // Ignored by logger level
+logger.error('DB Error', { error: new Error('Connection failed')}); // Goes to BOTH (stdout simple, stderr JSON)
+logger.debug('Should not appear'); // Filtered out by logger's level ('info')
 ```
 
 ---
@@ -262,19 +285,18 @@ import { createLogger } from 'scribelog';
 const baseLogger = createLogger({ level: 'debug', defaultMeta: { app: 'my-api' } });
 
 function processUserData(userId: string) {
-  const userLogger = baseLogger.child({ userId }); // Inherits level, format, transports
-                                                  // Adds { userId: '...' }
+  // Create a logger specific to this user's context
+  const userLogger = baseLogger.child({ userId, module: 'userProcessing' });
 
-  userLogger.debug('Starting data processing');
+  userLogger.debug('Starting data processing'); // Includes { app: 'my-api', userId: '...', module: '...' }
   // ...
   userLogger.info('Data processed');
-  // Logs will include { app: 'my-api', userId: '...' }
 }
 
 function processAdminTask(adminId: string) {
+    // Create a logger for admin tasks
     const adminLogger = baseLogger.child({ adminId, scope: 'admin' });
     adminLogger.info('Performing admin task');
-     // Logs will include { app: 'my-api', adminId: '...', scope: 'admin' }
 }
 
 processUserData('user-77');
@@ -288,26 +310,30 @@ processAdminTask('admin-01');
 Set `handleExceptions: true` and/or `handleRejections: true` in `createLogger` options to automatically log fatal errors.
 
 ```ts
-import { createLogger } from 'scribelog';
+import { createLogger, format } from 'scribelog';
 
 const logger = createLogger({
   level: 'info',
-  format: format.defaultJsonFormat, // Log errors as JSON
+  format: format.defaultJsonFormat, // Log errors as JSON for easier parsing
   handleExceptions: true,
   handleRejections: true,
-  exitOnError: true // Default: Exit after logging fatal error
+  exitOnError: true // Default behavior: Exit after logging fatal error
 });
 
 logger.info('Application running with error handlers.');
 
-// This would cause the logger to log the error and exit:
-// throw new Error('Something broke badly!');
+// Example of what would be caught:
+// setTimeout(() => { throw new Error('Something broke badly!'); }, 50);
+// Output (JSON): {"level":"error","message":"Something broke badly!","timestamp":"...","exception":true,"eventType":"uncaughtException","errorName":"Error","stack":"..."}
+// ... and process exits
 
-// This would also cause logging and exit:
+// Example of what would be caught:
 // Promise.reject('Unhandled promise rejection reason');
+// Output (JSON): {"level":"error","message":"Unhandled promise rejection reason","timestamp":"...","exception":true,"eventType":"unhandledRejection","errorName":"Error","stack":"...","originalReason":"..."}
+// ... and process exits
 ```
 
-The logger adds `{ exception: true, eventType: '...', errorName: '...', stack: '...' }` to the log metadata for these events.
+The logger adds `{ exception: true, eventType: '...', ...errorDetails }` to the log metadata for these events, processed by the `format.errors()` formatter. Remember to have `format.errors()` in your format chain to see detailed error info.
 
 ---
 
@@ -322,14 +348,12 @@ The logger adds `{ exception: true, eventType: '...', errorName: '...', stack: '
 
 ## 🤝 Contributing
 
-Contributions are welcome! Please feel free to submit issues and pull requests.
-
-*(Consider adding contribution guidelines)*
+Contributions are welcome! Please feel free to submit issues and pull requests. Check for any existing guidelines or open an issue to discuss larger changes.
 
 ---
 
 ## 📄 License
 
 MIT License
-Copyright (c) 2024 Tolan Games *(Zmień na swoje)*
+Copyright (c) 2025 tolongames
 See [LICENSE](./LICENSE) for details.
