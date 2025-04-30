@@ -335,6 +335,226 @@ logger.info('Application running with error handlers.');
 
 The logger adds `{ exception: true, eventType: '...', ...errorDetails }` to the log metadata for these events, processed by the `format.errors()` formatter. Remember to have `format.errors()` in your format chain to see detailed error info.
 
+## 💻 Showcase
+
+You can run this script to see how scribelog works.
+
+<details>
+<summary>Click to show/hide showcase.ts code</summary>
+
+```ts
+// showcase.ts
+// Import everything needed from scribelog
+import {
+    createLogger,
+    format,     // Object containing formatters
+    transports, // Object containing transports
+    Logger,     // Logger interface type
+    LogLevel,   // Log level type ('info', 'debug', etc.)
+    LogFormat,  // Formatter function type
+    Transport,  // Transport interface type
+    LoggerOptions // Configuration options type
+} from 'scribelog'; // Import from your published package
+// Import 'process' for PID access
+import process from 'process';
+// Import 'crypto' for generating unique IDs
+import crypto from 'crypto';
+// Import 'date-fns' for custom date formatting (used in one example)
+import { format as formatDate } from 'date-fns';
+// Import chalk to demonstrate color control (optional for user)
+import chalk from 'chalk';
+
+// --- MAIN DEMO FUNCTION ---
+async function runShowcase() {
+    console.log('\n===========================================');
+    console.log('🚀 Scribelog Showcase - All Features Demo 🚀');
+    console.log('===========================================\n');
+
+    // === 1. Basic Configuration & Levels ===
+    console.log('--- 1. Basic Configuration & Levels ---');
+    // Create a logger with a specific level. Default format is 'simple'.
+    const logger1 = createLogger({ level: 'debug' }); // Set level to 'debug' to see more logs
+    logger1.info('Logger 1 (level: debug, format: simple)');
+    logger1.warn('Warning from Logger 1');
+    logger1.debug('Debug message from Logger 1 (should appear)');
+    logger1.error('Error from Logger 1'); // Default ConsoleTransport sends this to stderr
+
+    // === 2. Different Formats ===
+    console.log('\n--- 2. Different Formats ---');
+
+    // 2a. JSON Format
+    console.log('\n--- 2a. JSON Format ---');
+    const logger2a = createLogger({
+        format: format.defaultJsonFormat, // Use the predefined JSON format (includes errors, timestamp etc.)
+        level: 'info' // Set level for this specific logger
+    });
+    logger2a.info('Log in JSON format.', { data: true, value: 123 });
+    const jsonError = new Error("JSON Formatted Error");
+    (jsonError as any).code = "E_JSON"; // Add custom error property
+    // Log an error object within metadata
+    logger2a.error('An error occurred (JSON)', { error: jsonError, user: 'admin' });
+
+    // 2b. Custom Simple Format (Colored)
+    console.log('\n--- 2b. Custom Simple Format (Colored) ---');
+    const customSimpleFormat = format.combine(
+        format.timestamp({ format: 'HH:mm:ss' }), // Custom time format only
+        format.level(),                          // Add level string
+        format.message(),                        // Add message string
+        format.metadata({ exclude: ['pid'] }),   // Add other metadata, but exclude 'pid'
+        format.errors({ stack: false }),         // Add error info (name, message) but no stack
+        format.simple({ colors: true })          // Force colors ON for the output string
+    );
+    const logger2b = createLogger({ format: customSimpleFormat, level: 'info' });
+    const originalChalkLevel2b = chalk.level; // Store current chalk level
+    chalk.level = 1; // Force basic colors for this demo section
+    logger2b.info('Custom simple format', { pid: 12345, user: 'demo' });
+    logger2b.error('Another error (custom simple)', { error: new Error("Simple format error") });
+    chalk.level = originalChalkLevel2b; // Restore original chalk level
+
+    // 2c. Custom JSON Format with Aliases and Nesting
+    console.log('\n--- 2c. Custom JSON Format (Aliases & Nesting) ---');
+    const customJson = format.combine(
+        format.timestamp({ alias: '@timestamp' }), // Rename timestamp field
+        format.level({ alias: 'severity' }),     // Rename level field
+        format.message(),                        // Keep message field
+        format.errors({ stack: true }),          // Include full error details + stack
+        format.metadata({ alias: 'details' }),   // Nest all other metadata under 'details'
+        format.json()                            // Output as JSON
+    );
+    const logger2c = createLogger({ format: customJson, level: 'info' });
+    logger2c.warn('Custom JSON with nested meta', { transactionId: 'xyz', status: 'WARN' });
+    const nestedError = new Error("Nested Error");
+    nestedError.stack = "Fake stack\n  at place";
+    logger2c.error("Error with nested meta", { error: nestedError, code: 503 });
+
+
+    // === 3. Multiple Transports ===
+    console.log('\n--- 3. Multiple Transports ---');
+    const originalChalkLevel3 = chalk.level; // Store current chalk level
+    chalk.level = 0; // Disable colors globally for easier comparison of output
+    const logger3 = createLogger({
+        level: 'debug', // Main logger allows all levels through
+        transports: [
+            // Transport 1: Logs 'info' and above, uses simple format, errors to stderr
+            new transports.Console({
+                level: 'info',                   // Transport-specific level filter
+                format: format.defaultSimpleFormat, // Use simple format (colors off due to global chalk level)
+                useStdErrLevels: ['error']       // Only 'error' level goes to stderr
+            }),
+            // Transport 2: Logs 'debug' and above, uses JSON format, warn/error to stderr
+            new transports.Console({
+                level: 'debug',                  // Transport-specific level filter
+                format: format.defaultJsonFormat, // Use JSON format
+                useStdErrLevels: ['warn', 'error'] // 'warn' and 'error' go to stderr
+            })
+        ]
+    });
+    logger3.debug('Debug log (JSON only)');                      // Only Transport 2 logs this
+    logger3.info('Info log (Simple on stdout & JSON on stdout)'); // Both transports log (both to stdout)
+    logger3.warn('Warn log (Simple on stdout & JSON on stderr)'); // Both transports log (JSON to stderr)
+    logger3.error('Error log (Simple on stderr & JSON on stderr)'); // Both transports log (both to stderr)
+    chalk.level = originalChalkLevel3; // Restore original chalk level
+
+    // === 4. Child Loggers ===
+    console.log('\n--- 4. Child Loggers ---');
+    // Parent logger setup
+    const parentLogger = createLogger({
+        level: 'debug',                           // Set parent level
+        format: format.simple({ colors: false }), // Use simple format without colors for clarity
+        defaultMeta: { service: 'MainService' }   // Parent's default metadata
+    });
+    parentLogger.info('Parent log.'); // Contains { service: 'MainService' }
+
+    // Create first child, inheriting settings but adding 'module'
+    const childLogger1 = parentLogger.child({ module: 'ModuleA' });
+    childLogger1.info('Child 1 log.'); // Contains { service: 'MainService', module: 'ModuleA' }
+
+    // Create a child of the first child, inheriting and overriding 'module'
+    const childLogger2 = childLogger1.child({ function: 'doWork', module: 'OverrideModule' });
+    childLogger2.debug('Child 2 log (debug).', { value: 42 }); // Contains { service: 'MainService', module: 'OverrideModule', function: 'doWork', value: 42 }
+
+    // === 5. logEntry Method ===
+    console.log('\n--- 5. logEntry Method ---');
+    // Create a logger specifically for HTTP level logs
+    const entryLogger = createLogger({ level: 'http' });
+    // Use logEntry to log a pre-structured object.
+    // Scribelog will still process it through the format pipeline.
+    entryLogger.logEntry({
+        level: 'http', // Must be >= logger's level ('http')
+        message: 'Manual log entry with custom data',
+        // Add any custom fields relevant to this log
+        method: 'POST',
+        url: '/api/users',
+        statusCode: 201,
+    });
+    // Another example
+    entryLogger.logEntry({ level: 'info', message: 'This info entry will also show' }); // info > http
+
+    // === 6. Exception/Rejection Handling (Simulation) ===
+    console.log('\n--- 6. Exception/Rejection Handling (Simulating real events) ---');
+    // IMPORTANT: Set this to true ONLY if you want the script to exit upon error.
+    // Set to false for this demo to see both handlers potentially log.
+    const exitOnHandler = false;
+    let errorHandlingLogger: Logger | undefined = undefined;
+
+    console.log(`Creating logger with handleExceptions/Rejections, exitOnError: ${exitOnHandler}`);
+    errorHandlingLogger = createLogger({
+        level: 'debug', // Log everything from the handlers
+        transports: [new transports.Console({ format: format.defaultSimpleFormat })], // Use simple format for errors
+        handleExceptions: true, // Enable uncaughtException handler
+        handleRejections: true, // Enable unhandledRejection handler
+        exitOnError: exitOnHandler // Control whether process exits
+    });
+    errorHandlingLogger.info(`Error handlers active (exitOnError: ${exitOnHandler}).`);
+
+    // --- Simulate Errors ---
+    // NOTE: In a real app, these would happen unexpectedly.
+    // We use setTimeout to allow the script to reach the end and potentially remove handlers if exitOnError is false.
+
+    console.log("Simulating unhandled rejection (will be logged)...");
+    // Intentionally create an unhandled rejection
+    Promise.reject("Simulated rejection reason (handled by logger)");
+
+    console.log("Simulating uncaught exception in 100ms (will be logged)...");
+    const exceptionTimer = setTimeout(() => {
+        // Simulate an error that wasn't caught by application code
+        throw new Error("Simulated uncaught exception (handled by logger)");
+        // Note: If exitOnError were true, the process would exit shortly after logging this.
+    }, 100);
+
+    // --- Wait and Cleanup (only necessary if exitOnError is false) ---
+    if (!exitOnHandler) {
+      console.log("Waiting briefly for handlers to potentially run...");
+      await new Promise(resolve => setTimeout(resolve, 300)); // Wait longer than the exception timeout
+
+      console.log("Attempting to remove handlers (as exitOnError was false)...");
+      if (errorHandlingLogger && typeof (errorHandlingLogger as any).removeExceptionHandlers === 'function') {
+          (errorHandlingLogger as any).removeExceptionHandlers();
+          errorHandlingLogger.info('Error handlers removed.'); // Log using the same logger
+      } else {
+          console.warn('[Showcase] Could not remove error handlers (method not found?).');
+      }
+    }
+
+    // If exitOnError was true, the script might have exited before reaching here.
+    console.log('\n===========================================');
+    console.log('✅ Scribelog Showcase Finished (Check logs above) ✅');
+    console.log('===========================================');
+
+} // End runShowcase
+
+// Run the main demo function
+runShowcase().catch(e => {
+    // This catch is unlikely to be hit if handleExceptions is true,
+    // but good practice to have.
+    console.error("!!! Unexpected error running showcase:", e);
+});
+```
+
+</details>
+If you have any questions about scribelog or would like to know more about how to use any of the features. You can write to me on discord:
+theonlytolon
+
 ---
 
 ## 📚 Future Work
