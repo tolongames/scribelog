@@ -23,26 +23,24 @@ export type LogFormat = (
   info: Record<string, any>
 ) => Record<string, any> | string;
 
-
 /**
  * Opcje dla FileTransport. Bazują na opcjach `rotating-file-stream`.
  * @see https://github.com/iccicci/rotating-file-stream#options
  */
 export interface FileTransportOptions {
-    level?: LogLevel;
-    format?: LogFormat;
-    filename: string;
-    size?: string;
-    interval?: string;
-    path?: string;
-    compress?: string | boolean;
-    maxFiles?: number;
-    maxSize?: string;
-    createPath?: boolean;
-    fsWriteStreamOptions?: object;
-    utc?: boolean; // Chociaż nie używamy bezpośrednio, zostawmy dla kompletności typu
+  level?: LogLevel;
+  format?: LogFormat;
+  filename: string;
+  size?: string;
+  interval?: string;
+  path?: string;
+  compress?: string | boolean;
+  maxFiles?: number;
+  maxSize?: string;
+  createPath?: boolean;
+  fsWriteStreamOptions?: object;
+  utc?: boolean; // Chociaż nie używamy bezpośrednio, zostawmy dla kompletności typu
 }
-
 
 // Interfejs dla Transportu
 export interface Transport {
@@ -51,7 +49,6 @@ export interface Transport {
   format?: LogFormat;
   close?(): void;
 }
-
 
 // Opcje konfiguracyjne przy tworzeniu Loggera
 export interface LoggerOptions {
@@ -70,7 +67,12 @@ export interface LoggerOptions {
 export type LoggerInterface = {
   // Metody logowania
   // logEntry akceptuje teraz opcjonalny splat
-  logEntry(entry: Omit<LogInfo, 'timestamp' | 'level' | 'message'> & Partial<Pick<LogInfo, 'level' | 'message' | 'splat'>> & { timestamp?: Date }): void;
+  logEntry(
+    entry: Omit<LogInfo, 'timestamp' | 'level' | 'message'> &
+      Partial<Pick<LogInfo, 'level' | 'message' | 'splat'>> & {
+        timestamp?: Date;
+      }
+  ): void;
   // Metoda log i metody poziomów akceptują teraz `message: any` i `...args: any[]`
   log(level: LogLevel, message: any, ...args: any[]): void;
   error(message: any, ...args: any[]): void;

@@ -7,10 +7,10 @@ import {
 import type {
   LoggerInterface as _LoggerInterface,
   LoggerOptions as _LoggerOptions,
-  LogInfo,                // Dodaj LogInfo tutaj
+  LogInfo, // Dodaj LogInfo tutaj
   Transport as _Transport,
   LogFormat as _LogFormat,
-  FileTransportOptions as _FileTransportOptions // Importuj opcje FileTransport
+  FileTransportOptions as _FileTransportOptions, // Importuj opcje FileTransport
 } from './types';
 import { standardLevels, LogLevel, LogLevels } from './levels';
 import { ConsoleTransport as _ConsoleTransport } from './transports/console';
@@ -36,7 +36,7 @@ export type { LogLevel, LogLevels };
 // Eksportuj transporty
 export const transports = {
   Console: _ConsoleTransport,
-  File: _FileTransport // Dodaj FileTransport
+  File: _FileTransport, // Dodaj FileTransport
 };
 export type Transport = _Transport;
 export type ConsoleTransportOptions = _ConsoleTransportOptions;
