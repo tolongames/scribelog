@@ -4,13 +4,16 @@ import { LogLevel as _LogLevel, LogLevels } from './levels';
 // Re-eksport LogLevel jako typ
 export type LogLevel = _LogLevel;
 
+// --- POCZĄTEK ZMIANY: Dodaj pole splat do LogInfo, message może być any ---
 // Interfejs LogInfo - podstawowa struktura danych logu
 export interface LogInfo {
   level: LogLevel;
-  message: string;
+  message: any; // Wiadomość może być dowolnego typu, zwłaszcza jeśli przekazano tylko obiekt Error
   timestamp: Date;
+  splat?: any[]; // Opcjonalna tablica argumentów dla formatowania printf/splat
   [key: string]: any; // Pozwala na dowolne dodatkowe metadane
 }
+// --- KONIEC ZMIANY ---
 
 /**
  * Funkcja formatująca. Przyjmuje obiekt (początkowo LogInfo,
@@ -20,15 +23,36 @@ export type LogFormat = (
   info: Record<string, any>
 ) => Record<string, any> | string;
 
+
+/**
+ * Opcje dla FileTransport. Bazują na opcjach `rotating-file-stream`.
+ * @see https://github.com/iccicci/rotating-file-stream#options
+ */
+export interface FileTransportOptions {
+    level?: LogLevel;
+    format?: LogFormat;
+    filename: string;
+    size?: string;
+    interval?: string;
+    path?: string;
+    compress?: string | boolean;
+    maxFiles?: number;
+    maxSize?: string;
+    createPath?: boolean;
+    fsWriteStreamOptions?: object;
+    utc?: boolean; // Chociaż nie używamy bezpośrednio, zostawmy dla kompletności typu
+}
+
+
 // Interfejs dla Transportu
 export interface Transport {
-  // Metoda logująca transportu, przyjmuje wynik formatowania
   log(processedEntry: Record<string, any> | string): void;
   level?: LogLevel;
   format?: LogFormat;
+  close?(): void;
 }
 
-// --- POCZĄTEK ZMIANY: Dodano opcje obsługi błędów ---
+
 // Opcje konfiguracyjne przy tworzeniu Loggera
 export interface LoggerOptions {
   level?: LogLevel;
@@ -36,41 +60,35 @@ export interface LoggerOptions {
   format?: LogFormat;
   transports?: Transport[];
   defaultMeta?: Record<string, any>;
-
-  /** Czy logger ma przechwytywać i logować nieobsłużone wyjątki. Domyślnie: false */
   handleExceptions?: boolean;
-  /** Czy logger ma przechwytywać i logować nieobsłużone odrzucenia promisów. Domyślnie: false */
   handleRejections?: boolean;
-  /** Czy zakończyć proces po nieobsłużonym wyjątku/odrzuceniu (jeśli handleExceptions/handleRejections jest true). Domyślnie: true */
   exitOnError?: boolean;
 }
-// --- KONIEC ZMIANY ---
 
+// --- POCZĄTEK ZMIANY: Zaktualizuj sygnatury metod w LoggerInterface ---
 // Interfejs Loggera - definiuje publiczne API
-// Import _LoggerInterface usunięty, używamy LoggerInterface w definicji child()
 export type LoggerInterface = {
   // Metody logowania
-  logEntry(entry: Omit<LogInfo, 'timestamp'> & { timestamp?: Date }): void;
-  log(level: LogLevel, message: string, meta?: Record<string, any>): void;
+  // logEntry akceptuje teraz opcjonalny splat
+  logEntry(entry: Omit<LogInfo, 'timestamp' | 'level' | 'message'> & Partial<Pick<LogInfo, 'level' | 'message' | 'splat'>> & { timestamp?: Date }): void;
+  // Metoda log i metody poziomów akceptują teraz `message: any` i `...args: any[]`
+  log(level: LogLevel, message: any, ...args: any[]): void;
+  error(message: any, ...args: any[]): void;
+  warn(message: any, ...args: any[]): void;
+  info(message: any, ...args: any[]): void;
+  http(message: any, ...args: any[]): void;
+  verbose(message: any, ...args: any[]): void;
+  debug(message: any, ...args: any[]): void;
+  silly(message: any, ...args: any[]): void;
 
-  // Metody poziomów
-  error(message: string, meta?: Record<string, any>): void;
-  warn(message: string, meta?: Record<string, any>): void;
-  info(message: string, meta?: Record<string, any>): void;
-  http(message: string, meta?: Record<string, any>): void;
-  verbose(message: string, meta?: Record<string, any>): void;
-  debug(message: string, meta?: Record<string, any>): void;
-  silly(message: string, meta?: Record<string, any>): void;
-
-  // Właściwości i metody konfiguracyjne
+  // Właściwości i metody konfiguracyjne (bez zmian)
   level: LogLevel;
   levels: LogLevels;
   isLevelEnabled(level: LogLevel): boolean;
   addTransport(transport: Transport): void;
+  removeExceptionHandlers?(): void;
 
-  /**
-   * Tworzy nowy logger potomny.
-   * @param defaultMeta - Obiekt z domyślnymi metadanymi dla loggera potomnego.
-   */
-  child(defaultMeta: Record<string, any>): LoggerInterface; // Zwraca ten sam interfejs
+  // Metoda child (bez zmian)
+  child(defaultMeta: Record<string, any>): LoggerInterface;
 };
+// --- KONIEC ZMIANY ---

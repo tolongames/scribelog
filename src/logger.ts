@@ -13,8 +13,8 @@ import * as format from './format';
 // Importuj funkcję pomocniczą do wychodzenia z procesu
 import { _internalExit } from './utils';
 
-// Typ wejściowy dla logEntry
-type LogEntryInput = Omit<LogInfo, 'timestamp'> & { timestamp?: Date };
+// Typ wejściowy dla logEntry - uwzględnia opcjonalny splat
+type LogEntryInput = Omit<LogInfo, 'timestamp' | 'level' | 'message'> & Partial<Pick<LogInfo, 'level' | 'message' | 'splat'>> & { timestamp?: Date };
 
 // Re-eksport typu LoggerInterface
 export type LoggerInterface = _LoggerInterface;
@@ -28,9 +28,9 @@ export class Scribelog implements LoggerInterface {
   private defaultMeta?: Record<string, any>;
   private options: LoggerOptions; // Przechowuje oryginalne opcje konfiguracyjne
 
-  private exitOnError: boolean; // Czy kończyć proces po błędzie
-  private exceptionHandler?: (err: Error) => void; // Listener dla uncaughtException
-  private rejectionHandler?: (reason: any, promise: Promise<any>) => void; // Listener dla unhandledRejection
+  private exitOnError: boolean;
+  private exceptionHandler?: (err: Error) => void;
+  private rejectionHandler?: (reason: any, _promise: Promise<any>) => void; // _promise jest nieużywane
 
   constructor(options: LoggerOptions = {}) {
     this.options = { ...options }; // Zapisz kopię opcji
@@ -40,7 +40,7 @@ export class Scribelog implements LoggerInterface {
       options.transports && options.transports.length > 0
         ? options.transports
         : [new ConsoleTransport()]; // Domyślnie ConsoleTransport
-    // Użyj formatu z opcji lub domyślnego simple (który teraz zawiera errors())
+    // Użyj formatu z opcji lub domyślnego simple (który teraz zawiera errors() i splat())
     this.format = options.format || format.defaultSimpleFormat;
     this.defaultMeta = options.defaultMeta;
 
@@ -50,14 +50,10 @@ export class Scribelog implements LoggerInterface {
     // Konfiguracja obsługi nieprzechwyconych wyjątków
     if (options.handleExceptions) {
       this.exceptionHandler = (err: Error) => {
-        // Wywołaj logError, przekazując callback do ewentualnego wyjścia
         this.logError('uncaughtException', err, () => {
-          if (this.exitOnError) {
-            _internalExit(1); // Użyj _internalExit
-          }
+          if (this.exitOnError) { _internalExit(1); }
         });
       };
-      // Ostrożnie z removeAllListeners w produkcji!
       process.removeAllListeners('uncaughtException');
       process.on('uncaughtException', this.exceptionHandler);
     }
@@ -65,197 +61,215 @@ export class Scribelog implements LoggerInterface {
     // Konfiguracja obsługi nieprzechwyconych odrzuceń promisów
     if (options.handleRejections) {
       this.rejectionHandler = (reason: any, _promise: Promise<any>) => {
-        // Stwórz obiekt Error, nawet jeśli reason nim nie jest
         const error =
           reason instanceof Error
             ? reason
             : new Error(String(reason ?? 'Unhandled Rejection'));
-        if (!(reason instanceof Error)) {
-          (error as any).originalReason = reason;
-        }
-        // Wywołaj logError, przekazując callback
+        if (!(reason instanceof Error)) { (error as any).originalReason = reason; }
         this.logError('unhandledRejection', error, () => {
-          if (this.exitOnError) {
-            _internalExit(1); // Użyj _internalExit
-          }
+          if (this.exitOnError) { _internalExit(1); }
         });
       };
-      // Ostrożnie z removeAllListeners w produkcji!
       process.removeAllListeners('unhandledRejection');
       process.on('unhandledRejection', this.rejectionHandler);
     }
   }
 
-  // Metody poziomów (delegują do log)
-  public error(message: string, meta?: Record<string, any>): void {
-    this.log('error', message, meta);
-  }
-  public warn(message: string, meta?: Record<string, any>): void {
-    this.log('warn', message, meta);
-  }
-  public info(message: string, meta?: Record<string, any>): void {
-    this.log('info', message, meta);
-  }
-  public http(message: string, meta?: Record<string, any>): void {
-    this.log('http', message, meta);
-  }
-  public verbose(message: string, meta?: Record<string, any>): void {
-    this.log('verbose', message, meta);
-  }
-  public debug(message: string, meta?: Record<string, any>): void {
-    this.log('debug', message, meta);
-  }
-  public silly(message: string, meta?: Record<string, any>): void {
-    this.log('silly', message, meta);
-  }
+  // --- POCZĄTEK ZMIANY: Aktualizacja sygnatur metod poziomów ---
+  // Metody poziomów delegują teraz do log z ...args
+  public error(message: any, ...args: any[]): void { this.log('error', message, ...args); }
+  public warn(message: any, ...args: any[]): void { this.log('warn', message, ...args); }
+  public info(message: any, ...args: any[]): void { this.log('info', message, ...args); }
+  public http(message: any, ...args: any[]): void { this.log('http', message, ...args); }
+  public verbose(message: any, ...args: any[]): void { this.log('verbose', message, ...args); }
+  public debug(message: any, ...args: any[]): void { this.log('debug', message, ...args); }
+  public silly(message: any, ...args: any[]): void { this.log('silly', message, ...args); }
+  // --- KONIEC ZMIANY ---
 
-  // Metoda log (główna logika dla standardowych wywołań)
-  public log(
-    level: LogLevel,
-    message: string,
-    meta?: Record<string, any>
-  ): void {
-    // Sprawdź najpierw poziom głównego loggera
+  // --- POCZĄTEK ZMIANY: Aktualizacja głównej metody log ---
+  /**
+   * Główna metoda logująca.
+   * Rozpoznaje, czy ostatni argument to obiekt metadanych, czy część splat.
+   */
+  public log(level: LogLevel, message: any, ...args: any[]): void {
+    // Sprawdź poziom loggera
     if (!this.isLevelEnabled(level)) return;
+
     const timestamp = new Date();
-    // Połącz metadane
+    let meta: Record<string, any> | undefined = undefined;
+    let splatArgs: any[] = args;
+
+    // Poprawiona logika wykrywania obiektu meta na końcu argumentów
+    if (args.length > 0) {
+        const lastArg = args[args.length - 1];
+        // Sprawdź, czy ostatni argument jest "zwykłym" obiektem (nie Error, Date, Array itp.)
+        // i nie jest nullem. To bardziej niezawodna heurystyka.
+        if (
+            typeof lastArg === 'object' &&
+            lastArg !== null &&
+            !Array.isArray(lastArg) && // Tablice to argumenty splat
+            !(lastArg instanceof Error) &&
+            !(lastArg instanceof Date)
+            // Można dodać więcej sprawdzeń, np. Buffer, Stream
+        ) {
+            meta = lastArg;
+            splatArgs = args.slice(0, -1); // Reszta to splat
+        }
+    }
+
+    // Połącz metadane domyślne loggera z tymi z wywołania
     const metaData = { ...(this.defaultMeta || {}), ...(meta || {}) };
-    // Stwórz podstawowy obiekt LogInfo
-    const logEntry: LogInfo = { level, message, timestamp, ...metaData };
-    // Przekaż do przetworzenia i wysłania
-    this.processAndTransport(logEntry);
-  }
 
-  // Metoda logEntry (dla przekazywania gotowych obiektów)
-  public logEntry(entry: LogEntryInput): void {
-    const { level, message, timestamp: inputTimestamp, ...rest } = entry;
-    // Sprawdź poziom głównego loggera
-    if (!this.isLevelEnabled(level)) return;
-    const timestamp =
-      inputTimestamp instanceof Date ? inputTimestamp : new Date();
-    // Połącz metadane
-    const metaData = { ...(this.defaultMeta || {}), ...rest };
+    // Przygotuj wiadomość i potencjalny błąd
+    let messageToSend: any = message;
+    let errorToLog: Error | undefined = undefined;
+
+    // Jeśli pierwsza 'wiadomość' jest błędem, użyj jej message i zapisz błąd
+    if (message instanceof Error) {
+        messageToSend = message.message;
+        errorToLog = message;
+    }
+
     // Stwórz obiekt LogInfo
-    const logEntry: LogInfo = { level, message, timestamp, ...metaData };
+    const logEntry: LogInfo = {
+        level,
+        message: messageToSend,
+        timestamp,
+        // Dodaj splat, tylko jeśli istnieją argumenty i wiadomość jest stringiem
+        // Formater `splat` i tak sprawdzi typ wiadomości przed użyciem `util.format`
+        splat: splatArgs.length > 0 ? splatArgs : undefined,
+        ...metaData, // Dołącz połączone metadane
+    };
+
+     // Jeśli oryginalna 'message' była błędem, upewnij się, że jest w meta pod kluczem 'error'
+     // aby formater `errors` mógł go znaleźć. Nadpisz, jeśli meta już zawiera 'error'.
+     if (errorToLog) {
+        logEntry.error = errorToLog;
+     }
+
     // Przekaż do przetworzenia i wysłania
     this.processAndTransport(logEntry);
   }
+  // --- KONIEC ZMIANY ---
 
-  // Metoda sprawdzająca poziom głównego loggera
+
+  // Metoda logEntry (aktualizacja typu + przekazanie splat)
+  public logEntry(entry: LogEntryInput): void {
+    // Zapewnij domyślne wartości dla level i message, jeśli brak
+    const level = entry.level || 'info';
+    if (!this.isLevelEnabled(level)) return; // Sprawdź poziom
+
+    // message może być opcjonalne w LogEntryInput, więc obsłuż undefined
+    const message = entry.message ?? '';
+    // Pobierz resztę pól, w tym splat, jeśli istnieje
+    const { timestamp: inputTimestamp, splat, ...rest } = entry;
+    const timestamp = inputTimestamp instanceof Date ? inputTimestamp : new Date();
+    const metaData = { ...(this.defaultMeta || {}), ...rest }; // Łączymy meta z entry i defaultMeta
+    // Stwórz obiekt LogInfo, przekazując splat
+    const logEntry: LogInfo = { level, message, timestamp, splat, ...metaData };
+    this.processAndTransport(logEntry);
+  }
+
+  // Metoda sprawdzająca poziom głównego loggera (bez zmian)
   public isLevelEnabled(level: LogLevel): boolean {
     const targetLevelValue = this.levels[level];
     const currentLevelValue = this.levels[this.level];
-    if (targetLevelValue === undefined || currentLevelValue === undefined)
-      return false;
+    if (targetLevelValue === undefined || currentLevelValue === undefined) return false;
     return targetLevelValue <= currentLevelValue;
   }
 
-  // Metoda dodająca transport
-  public addTransport(transport: Transport): void {
-    this.transports.push(transport);
-  }
+  // Metoda dodająca transport (bez zmian)
+  public addTransport(transport: Transport): void { this.transports.push(transport); }
 
-  // Metoda tworząca logger potomny
+  // Metoda tworząca logger potomny (bez zmian)
   public child(childMeta: Record<string, any>): LoggerInterface {
     const newDefaultMeta = { ...(this.defaultMeta || {}), ...childMeta };
-    // Tworzy nową instancję z odziedziczonymi opcjami i nowymi meta
     const childLogger = new Scribelog({
       ...this.options,
-      transports: this.transports, // Współdzielone transporty
+      transports: this.transports,
       defaultMeta: newDefaultMeta,
     });
     return childLogger;
   }
 
-  /**
-   * Metoda do logowania błędów przechwyconych przez listenery process.on.
-   * Tworzy specjalny obiekt LogInfo z metadanymi błędu.
-   */
-  private logError(
-    eventType: 'uncaughtException' | 'unhandledRejection',
-    error: Error,
-    callback: () => void
-  ): void {
+  // Metoda logError (bez zmian)
+  private logError(eventType: 'uncaughtException' | 'unhandledRejection', error: Error, callback: () => void): void {
     try {
-      // Stwórz podstawowy obiekt LogInfo
-      // Formater `errors()` (używany w domyślnych formatach) zajmie się rozpakowaniem 'error'
-      const logEntry: LogInfo = {
-        level: 'error', // Zawsze loguj jako błąd
-        // Wiadomość teraz będzie pochodzić z format.message(), który weźmie error.message
-        message: error.message || 'Unknown error',
-        timestamp: new Date(),
-        // Dodaj metadane specyficzne dla błędu, aby format.errors() je znalazł
-        error: error, // Przekaż oryginalny obiekt błędu
-        exception: true, // Flaga wskazująca na wyjątek/odrzucenie
-        eventType: eventType, // Typ zdarzenia
-        ...(this.defaultMeta || {}), // Dołącz domyślne metadane loggera
-      };
-
-      // processAndTransport zastosuje odpowiedni format (np. defaultSimpleFormat),
-      // który zawiera format.errors() przetwarzający pole 'error'.
-      this.processAndTransport(logEntry);
+        const errorMeta = this.formatError(error);
+        const logEntry: LogInfo = {
+            level: 'error',
+            message: error.message || 'Unknown error', // Wiadomość błędu jako główna wiadomość
+            timestamp: new Date(),
+            error: error, // Przekaż oryginalny błąd do format.errors()
+            exception: true,
+            eventType: eventType,
+            ...errorMeta, // Dodaj name, stack etc.
+            ...(this.defaultMeta || {})
+        };
+        this.processAndTransport(logEntry);
     } catch (logErr) {
-      // Awaryjne logowanie, jeśli główny mechanizm zawiedzie
-      console.error('[scribelog] Error occurred during error logging:', logErr);
-      console.error('[scribelog] Original error was:', error);
+         console.error('[scribelog] Error occurred during error logging:', logErr);
+         console.error('[scribelog] Original error was:', error);
     } finally {
-      // Zawsze wywołaj callback, który może zawierać logikę wyjścia
-      callback();
+         callback();
     }
+}
+
+  // Metoda formatError (bez zmian)
+  private formatError(err: Error): Record<string, any> {
+      const standardKeys = ['message', 'name', 'stack'];
+      const properties = Object.getOwnPropertyNames(err).reduce((acc, key) => {
+          if (!standardKeys.includes(key)) { acc[key] = (err as any)[key]; }
+          return acc;
+      }, {} as Record<string, any>);
+      return {
+          // message: err.message, // Nie potrzebujemy duplikować, bo jest w logEntry
+          name: err.name,
+          stack: err.stack,
+          ...properties,
+          ...(err as any).originalReason ? { originalReason: (err as any).originalReason } : {}
+      };
   }
 
-  /**
-   * Usuwa listenery wyjątków dodane przez ten logger.
-   */
+  // Metoda removeExceptionHandlers (bez zmian)
   public removeExceptionHandlers(): void {
-    if (this.exceptionHandler) {
-      process.removeListener('uncaughtException', this.exceptionHandler);
-      this.exceptionHandler = undefined; // Wyczyść referencję
-    }
-    if (this.rejectionHandler) {
-      process.removeListener('unhandledRejection', this.rejectionHandler);
-      this.rejectionHandler = undefined; // Wyczyść referencję
-    }
+      if (this.exceptionHandler) {
+          process.removeListener('uncaughtException', this.exceptionHandler);
+          this.exceptionHandler = undefined;
+      }
+       if (this.rejectionHandler) {
+          process.removeListener('unhandledRejection', this.rejectionHandler);
+          this.rejectionHandler = undefined;
+       }
   }
 
-  // Metoda przetwarzająca i wysyłająca log do transportów
+  // Metoda processAndTransport (bez zmian)
   private processAndTransport(logEntry: LogInfo): void {
-    // Iteruj przez transporty
     for (const transport of this.transports) {
-      // Sprawdź, czy poziom logu jest wystarczający dla TEGO transportu
       if (this.isTransportLevelEnabled(transport, logEntry.level)) {
-        // Wybierz format: transportu lub domyślny loggera
         const formatToUse = transport.format || this.format;
-        // Zastosuj format do KOPII obiektu logEntry
-        const processedOutput = formatToUse({ ...logEntry });
-        // Wywołaj metodę log transportu
+        const processedOutput = formatToUse({ ...logEntry }); // Przekaż kopię
         try {
           transport.log(processedOutput);
         } catch (err) {
-          // Loguj błąd transportu do konsoli
           console.error('[scribelog] Error in transport:', err);
         }
       }
     }
-  }
+   }
 
-  // Metoda sprawdzająca poziom transportu
-  private isTransportLevelEnabled(
-    transport: Transport,
-    entryLevel: LogLevel
-  ): boolean {
+  // Metoda sprawdzająca poziom transportu (bez zmian)
+  private isTransportLevelEnabled(transport: Transport, entryLevel: LogLevel): boolean {
     const transportLevel = transport.level;
-    if (!transportLevel) return true; // Jeśli transport nie ma limitu, przepuść
+    if (!transportLevel) return true;
     const transportLevelValue = this.levels[transportLevel];
     const entryLevelValue = this.levels[entryLevel];
-    if (transportLevelValue === undefined || entryLevelValue === undefined)
-      return false; // Nieznany poziom
-    // Przepuść, jeśli poziom logu <= poziom transportu
+    if (transportLevelValue === undefined || entryLevelValue === undefined) return false;
     return entryLevelValue <= transportLevelValue;
-  }
+   }
 }
 
-// Fabryka do tworzenia loggera
+// Fabryka do tworzenia loggera (bez zmian)
 export function createLogger(options?: LoggerOptions): LoggerInterface {
   return new Scribelog(options);
 }
