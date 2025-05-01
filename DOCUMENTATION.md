@@ -67,6 +67,27 @@ Scribelog uses standard `npm` logging levels, ordered by severity (most severe f
 6.  `debug` (5)
 7.  `silly` (6)
 
+You can also define **custom logging levels** by passing a `levels` object to `createLogger`. For example:
+
+```typescript
+const customLevels = {
+  critical: 0,
+  error: 1,
+  warn: 2,
+  info: 3,
+  debug: 4,
+  trace: 5,
+};
+
+const logger = createLogger({
+  levels: customLevels,
+  level: 'trace',
+});
+
+logger.critical('Critical issue!');
+logger.trace('Trace message for debugging.');
+```
+
 When you set a `level` for a logger or a transport, only messages with that severity level **or higher** (i.e., lower numerical value) will be processed. The default logger level is `'info'`.
 
 ### 4.2 Log Methods
@@ -162,17 +183,20 @@ debugLogger.debug('This will be logged.');
 // Use JSON format by default for all transports unless overridden
 const jsonLogger = createLogger({ format: format.defaultJsonFormat });
 
-// Use a custom simple format without colors
-const noColorSimple = format.combine(
-    format.errors(),
-    format.splat(),
+// Use a custom simple format with custom colors
+const customColorFormat = format.combine(
     format.timestamp(),
-    format.level(),
-    format.message(),
-    format.metadata(),
-    format.simple({ colors: false }) // Disable colors
+    format.simple({
+      colors: true,
+      levelColors: {
+        error: chalk.bgRed.white,
+        warn: chalk.yellow.bold,
+        info: chalk.green,
+        debug: chalk.blue,
+      },
+    })
 );
-const plainLogger = createLogger({ format: noColorSimple });
+const colorLogger = createLogger({ format: customColorFormat });
 ```
 
 ### 5.3 `transports`
@@ -232,7 +256,37 @@ const fatalLogger = createLogger({
 
 Scribelog's formatting system is based on the concept of transforming the `LogInfo` object through a series of functions (formatters).
 
-### 6.1 The `format` Object
+### 6.1 Custom Color Themes
+
+You can now define custom color themes for your log levels using the `chalk` library.
+
+```typescript
+import { createLogger, format } from 'scribelog';
+import chalk from 'chalk';
+
+const logger = createLogger({
+  level: 'debug',
+  format: format.combine(
+    format.timestamp(),
+    format.simple({
+      colors: true,
+      levelColors: {
+        critical: chalk.bgRed.white.bold,
+        error: chalk.red,
+        warn: chalk.yellow,
+        info: chalk.green,
+        debug: chalk.blue,
+        trace: chalk.cyan,
+      },
+    })
+  ),
+});
+
+logger.info('Info message with custom colors!');
+logger.critical('Critical error with custom colors!');
+```
+
+### 6.2 The `format` Object
 
 All built-in formatters are accessed via the imported `format` object:
 
@@ -245,14 +299,14 @@ const myFormat = format.combine(
 );
 ```
 
-### 6.2 How Formatters Work
+### 6.3 How Formatters Work
 
 *   Each formatter is a function that returns another function conforming to the `LogFormat` type: `(info: Record<string, any>) => Record<string, any> | string`.
 *   This returned function takes the current log information object (`info`) as input.
 *   It transforms the `info` object (e.g., adds a field, modifies a field, extracts error info).
 *   It returns either the **modified `info` object** (for further processing by the next formatter) or a **final `string` representation** (if it's a terminal formatter like `simple` or `json`).
 
-### 6.3 Combining Formatters: `format.combine()`
+### 6.4 Combining Formatters: `format.combine()`
 
 This is the core function for creating custom format pipelines. It takes multiple formatter functions as arguments and returns a new single `LogFormat` function.
 
@@ -271,7 +325,7 @@ When `myFormat` is called with a `LogInfo` object:
 
 **Order Matters!** Place formatters like `errors` and `splat` early, before formatters that rely on the `message` or metadata fields they might modify (`message`, `metadata`, `simple`, `json`). Place terminal formatters (`simple`, `json`) last.
 
-### 6.4 Built-in Formatters
+### 6.5 Built-in Formatters
 
 #### `format.timestamp(options?)`
 
@@ -344,7 +398,7 @@ Gathers remaining "metadata" properties from the `info` object.
     *   `colors?: boolean`: Enable/disable ANSI colors (default: auto-detect TTY).
 *   **Output:** Returns a `string` in the format: `TIMESTAMP [LEVEL]: message {metadata}\nstackTrace` (colors applied if enabled). Uses `util.inspect` to format the `{metadata}` part.
 
-### 6.5 Predefined Formats
+### 6.6 Predefined Formats
 
 Convenience combinations for common use cases:
 
@@ -354,7 +408,7 @@ Convenience combinations for common use cases:
 *   **`format.defaultJsonFormat`**:
     `combine(errors({ stack: true }), splat(), timestamp(), level(), message(), metadata(), json())`
 
-### 6.6 Creating Custom Formats
+### 6.7 Creating Custom Formats
 
 You can easily create your own formatters. A formatter is just a function that returns a `LogFormat` function.
 

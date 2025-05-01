@@ -11,10 +11,10 @@
 
 ## ✨ Key Features
 
-*   **Standard Logging Levels:** Uses familiar levels (`error`, `warn`, `info`, `http`, `verbose`, `debug`, `silly`).
-*   **Highly Flexible Formatting:** Combine powerful formatters (`simple`, `json`, `timestamp`, `metadata`, `errors`, `splat`) using a composable API (`format.combine`). Customize outputs easily.
+**Standard & Custom Logging Levels:** Use familiar levels (`error`, `warn`, `info`, etc.) or define your own custom levels.
+*   **Highly Flexible Formatting:** Combine powerful formatters (`simple`, `json`, `timestamp`, `metadata`, `errors`, `splat`) using a composable API (`format.combine`). Customize outputs easily, including color themes.
 *   **Printf-Style Logging:** Use `printf`-like placeholders (`%s`, `%d`, `%j`) via `format.splat()` for easy message interpolation.
-*   **Console Color Support:** Automatic, readable colorization for the `simple` format in TTY environments.
+*   **Console Color Support:** Automatic, readable colorization for the `simple` format in TTY environments, with customizable themes.
 *   **Multiple Transports:** Log to different destinations. Built-in `ConsoleTransport` and `FileTransport` with rotation options.
 *   **Child Loggers:** Easily create contextual loggers (`logger.child({...})`) that inherit settings but add specific metadata (like `requestId`).
 *   **Automatic Error Handling:** Optionally catch and log `uncaughtException` and `unhandledRejection` events, including stack traces.
@@ -40,38 +40,38 @@ pnpm add scribelog
 Get up and running in seconds:
 
 ```ts
-import { createLogger } from 'scribelog';
+import { createLogger, format } from 'scribelog';
+import chalk from 'chalk';
 
-// Logger with default settings:
-// - Level: 'info'
-// - Format: Simple, colored output (if TTY)
-// - Transport: Console
-const logger = createLogger();
+// Logger with custom color theme and default settings
+const logger = createLogger({
+  level: 'debug',
+  format: format.combine(
+    format.timestamp(),
+    format.simple({
+      colors: true,
+      levelColors: {
+        error: chalk.bgRed.white,
+        warn: chalk.yellow.bold,
+        info: chalk.green,
+        debug: chalk.blue,
+      },
+    })
+  ),
+});
 
 logger.info('Scribelog is ready!');
 logger.warn('Something seems off...', { detail: 'Cache size exceeded limit' });
-
-const userId = 'user-42';
-const action = 'login';
-logger.info('User %s performed action: %s', userId, action); // Printf-style
-
-try {
-  // Simulate an error
-  throw new Error('Failed to retrieve data');
-} catch(error) {
-  // Log the error object correctly
-  logger.error('Data retrieval failed', { error: error as Error });
-}
+logger.error('An error occurred!', { error: new Error('Test error') });
 ```
 
 **Default Console Output (example):**
 
 ```bash
-2024-05-01T12:00:00.123Z [INFO]: Scribelog is ready!
-2024-05-01T12:00:00.125Z [WARN]: Something seems off... { detail: 'Cache size exceeded limit' }
-2024-05-01T12:00:00.127Z [INFO]: User user-42 performed action: login
-2024-05-01T12:00:00.129Z [ERROR]: Failed to retrieve data { errorName: 'Error', exception: true }
-Error: Failed to retrieve data
+2025-05-01T12:00:00.123Z [INFO]: Scribelog is ready!
+2025-05-01T12:00:00.125Z [WARN]: Something seems off... { detail: 'Cache size exceeded limit' }
+2025-05-01T12:00:00.127Z [ERROR]: An error occurred! { errorName: 'Error', exception: true }
+Error: Test error
     at <anonymous>:... (stack trace)
 ```
 
@@ -89,13 +89,13 @@ This README covers the basics. For a comprehensive guide covering **all configur
 
 Configure your logger via `createLogger(options)`. Key options:
 
-*   `level`: `'info'` (default), `'debug'`, `'warn'`, etc.
-*   `format`: Use `format.combine(...)` with formatters like `format.simple()`, `format.json()`, `format.timestamp()`, `format.splat()`, `format.errors()`, `format.metadata()`. Default is `format.defaultSimpleFormat`.
+*   `level`: `'info'` (default), `'debug'`, `'warn'`, etc., or **custom levels** (e.g., `'critical'`, `'trace'`).
+*   `format`: Use `format.combine(...)` with formatters like `format.simple()`, `format.json()`, `format.timestamp()`, `format.splat()`, `format.errors()`, `format.metadata()`. Default is `format.defaultSimpleFormat`. You can also define **custom color themes** for log levels.
 *   `transports`: Array of `new transports.Console({...})` or `new transports.File({...})`. Default is one Console transport.
 *   `defaultMeta`: An object with data to add to every log message.
 *   `handleExceptions`, `handleRejections`, `exitOnError`: For automatic error catching.
 
-**Example: Logging JSON to a File**
+**Example 1: Logging JSON to a File**
 
 ```ts
 import { createLogger, format, transports } from 'scribelog';
@@ -116,7 +116,45 @@ const fileJsonLogger = createLogger({
 });
 
 fileJsonLogger.debug('Writing JSON log to file', { id: 1 });
-fileJsonLogger.error('File write error occurred', { error: new Error('Disk full'), file: 'data.txt'});
+fileJsonLogger.error('File write error occurred', { error: new Error('Disk full'), file: 'data.txt' });
+```
+
+**Example 2: Using Custom Levels and Colors**
+
+```ts
+import { createLogger, format } from 'scribelog';
+import chalk from 'chalk';
+
+const customLevels = {
+  critical: 0,
+  error: 1,
+  warn: 2,
+  info: 3,
+  debug: 4,
+  trace: 5,
+};
+
+const logger = createLogger({
+  levels: customLevels,
+  level: 'trace',
+  format: format.combine(
+    format.timestamp(),
+    format.simple({
+      colors: true,
+      levelColors: {
+        critical: chalk.bgRed.white.bold,
+        error: chalk.red,
+        warn: chalk.yellow,
+        info: chalk.green,
+        debug: chalk.blue,
+        trace: chalk.cyan,
+      },
+    })
+  ),
+});
+
+logger.critical('Critical issue!');
+logger.trace('Trace message for debugging.');
 ```
 
 ---
@@ -138,5 +176,5 @@ Contributions are welcome! Please feel free to submit issues and pull requests o
 ## 📄 License
 
 MIT License
-Copyright (c) 2024 tolongames
+Copyright (c) 2025 tolongames
 See [LICENSE](./LICENSE) for details.
