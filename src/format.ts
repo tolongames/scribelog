@@ -330,7 +330,12 @@ export const simple = (options: SimpleOptions = {}): LogFormat => {
       'splat',
       'pid',
       'hostname',
+      'tags',
     ]);
+    const tagsString =
+      Array.isArray(info.tags) && info.tags.length
+        ? ` [${info.tags.join(', ')}]`
+        : '';
     // Usunięto: 'originalReason', 'exception', 'eventType'
     // --- KONIEC ZMIANY ---
     for (const key in info) {
@@ -350,7 +355,7 @@ export const simple = (options: SimpleOptions = {}): LogFormat => {
         ? `\n${info.stack}`
         : '';
 
-    return `${coloredTimestamp}${hostnameStr} ${coloredLevel}${pidStr}: ${msgStr}${metaString}${stackString}`;
+    return `${coloredTimestamp}${hostnameStr} ${coloredLevel}${pidStr}${tagsString}: ${msgStr}${metaString}${stackString}`;
   };
 };
 
@@ -393,3 +398,61 @@ export const defaultSimpleFormat = combine(
   metadata(),
   simple()
 );
+
+// ...existing code...
+
+/**
+ * Formatter maskujący wrażliwe dane w logu.
+ * @param fields - Tablica nazw pól do zamaskowania (np. ['password', 'token'])
+ * @param mask - Wartość maskująca (np. '***' lub funkcja)
+ */
+export function maskSensitive(
+  fields: string[] = ['password', 'token', 'secret'],
+  mask: string | ((value: any, key: string) => any) = '***'
+): LogFormat {
+  // Rekurencyjnie maskuj pola w obiekcie
+  function maskObject(obj: any): any {
+    if (obj && typeof obj === 'object') {
+      for (const key of Object.keys(obj)) {
+        if (fields.includes(key)) {
+          obj[key] =
+            typeof mask === 'function' ? mask(obj[key], key) : mask;
+        } else if (typeof obj[key] === 'object' && obj[key] !== null) {
+          obj[key] = maskObject(obj[key]);
+        }
+      }
+    }
+    return obj;
+  }
+  return (info: Record<string, any>) => {
+    // Maskuj tylko w metadanych, nie w level/message/timestamp
+    const forbidden = new Set([
+      'level',
+      'message',
+      'timestamp',
+      'originalTimestamp',
+      'pid',
+      'hostname',
+      'tags',
+      'stack',
+      'errorName',
+      'splat',
+    ]);
+    for (const key in info) {
+      if (
+        Object.prototype.hasOwnProperty.call(info, key) &&
+        !forbidden.has(key)
+      ) {
+        if (typeof info[key] === 'object' && info[key] !== null) {
+          info[key] = maskObject(info[key]);
+        }
+        if (fields.includes(key)) {
+          info[key] =
+            typeof mask === 'function' ? mask(info[key], key) : mask;
+        }
+      }
+    }
+    return info;
+  };
+}
+// ...existing code...

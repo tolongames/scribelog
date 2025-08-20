@@ -128,6 +128,53 @@ logger.info('Login attempt', { username: 'alice' });
 // Log entry will contain both service and username
 ```
 
+#### **Automatic Request/Trace ID Propagation**
+
+Scribelog can automatically attach a request or trace ID to every log message using async context (AsyncLocalStorage). This is especially useful in web servers (Express, Koa, Fastify, etc.) to correlate all logs for a single request.
+
+**How it works:**
+
+- Use `runWithRequestContext({ requestId }, fn)` to establish a context for a request.
+- All logs within that context will automatically include the `requestId` field (unless explicitly overridden in metadata).
+
+**Example (Express):**
+
+```typescript
+import { runWithRequestContext, setRequestId, createLogger } from 'scribelog';
+const logger = createLogger();
+app.use((req, res, next) => {
+  const reqId = req.headers['x-request-id'] || generateRandomId();
+  runWithRequestContext({ requestId: String(reqId) }, () => {
+    next();
+  });
+});
+// Later in any code:
+logger.info('Handled request'); // Will include requestId automatically
+```
+
+You can access or set the current requestId at any time using `getRequestId()` and `setRequestId()`.
+
+**Note:** This works for any async code within the same request lifecycle, as long as you use `runWithRequestContext` at the start of the request.
+
+#### **Tagging log messages**
+
+You can add tags to any log message by including a `tags` array in your metadata object:
+
+```typescript
+logger.info('User login', { tags: ['auth', 'user'], userId: 123 });
+logger.warn('Payment failed', { tags: ['payment', 'order'], orderId: 42 });
+```
+
+Tags will be displayed in the log output (e.g., `[auth, user]`) and are available for custom filtering or processing in your transports and formatters.  
+You can also set default tags for all messages by including them in `defaultMeta`:
+
+```typescript
+const logger = createLogger({
+  defaultMeta: { tags: ['api'] }
+});
+logger.info('API started'); // Will include [api] in every log
+```
+
 ### 4.4 Logging Errors
 
 The recommended way to log `Error` objects is to pass them within the metadata object, typically under the key `'error'`. The `format.errors()` formatter (included in default formats) will detect this, extract useful information (message, name, stack, custom properties), and add them to the main log `info` object.
@@ -396,7 +443,34 @@ Gathers remaining "metadata" properties from the `info` object.
 
 *   **Options:**
     *   `colors?: boolean`: Enable/disable ANSI colors (default: auto-detect TTY).
-*   **Output:** Returns a `string` in the format: `TIMESTAMP [LEVEL]: message {metadata}\nstackTrace` (colors applied if enabled). Uses `util.inspect` to format the `{metadata}` part.
+*   **Output:** Returns a `string` in the format: `TIMESTAMP [LEVEL][tags]: message {metadata}\nstackTrace` (colors applied if enabled). If `tags` are present in the log info, they are displayed in square brackets after the level.
+
+#### `format.maskSensitive(fields?, mask?)`
+
+Masks sensitive fields in log metadata (recursively).
+
+- **fields:** `string[]` – array of field names to mask (default: `['password', 'token', 'secret']`)
+- **mask:** `string | (value, key) => any` – value or function to use as mask (default: `'***'`)
+
+**Example:**
+```typescript
+import { createLogger, format } from 'scribelog';
+
+const logger = createLogger({
+  format: format.combine(
+    format.maskSensitive(['password', 'token', 'apiKey']),
+    format.simple()
+  ),
+});
+
+logger.info('Sensitive test', {
+  username: 'bob',
+  password: 'sekret123',
+  token: 'abc',
+  profile: { apiKey: 'xyz', deep: { password: 'deepSecret' } },
+});
+// Output: password: '***', token: '***', profile: { apiKey: '***', deep: { password: '***' } }
+```
 
 ### 6.6 Predefined Formats
 
@@ -610,6 +684,118 @@ class MyCustomDbTransport implements Transport {
 // });
 ```
 
+### 7.6 Asynchronous Batch Transport (`transports.AsyncBatch`)
+
+The `AsyncBatchTransport` allows you to buffer and batch log messages before sending them to a target transport (such as a file or network transport). This is useful for reducing I/O operations and improving performance in high-throughput scenarios.
+
+**Constructor:**
+```typescript
+new transports.AsyncBatch(options: {
+  target: Transport;         // Required: the underlying transport to send batches to
+  batchSize?: number;        // Max number of logs per batch (default: 10)
+  flushIntervalMs?: number;  // Max time (ms) to wait before flushing a batch (default: 1000)
+  immediate?: boolean;       // If true, disables batching and sends logs immediately
+  level?: LogLevel;          // Optional: minimum level for this transport
+  format?: LogFormat;        // Optional: custom format for this transport
+})
+```
+
+**How it works:**
+- Logs are buffered in memory.
+- When the buffer reaches `batchSize`, all logs are flushed to the target transport.
+- If `flushIntervalMs` elapses before the buffer is full, the current buffer is flushed.
+- Calling `.close()` on the transport will flush any remaining logs and close the underlying target transport.
+
+**Example:**
+```typescript
+import { createLogger, transports } from 'scribelog';
+
+const fileTransport = new transports.File({ filename: 'batched.log' });
+
+const asyncBatch = new transports.AsyncBatch({
+  target: fileTransport,
+  batchSize: 5,
+  flushIntervalMs: 2000,
+});
+
+const logger = createLogger({
+  transports: [asyncBatch],
+});
+
+logger.info('First log');
+logger.info('Second log');
+// ...more logs
+```
+
+**Notes:**
+- You can wrap any transport (file, network, etc.) with `AsyncBatchTransport`.
+- If you set `immediate: true`, logs are passed through without batching.
+- Always call `.close()` on the transport during shutdown to ensure all logs are flushed.
+
+### 7.7 Remote Transports (HTTP, WebSocket, TCP, UDP)
+
+Scribelog provides remote transports for sending logs over the network. Recommended: wrap them with `transports.AsyncBatch` for performance.
+
+- `transports.Http(options: HttpTransportOptions)`  
+  Sends logs via HTTP/HTTPS (POST/PUT). Supports custom headers, timeouts, and gzip compression.
+  - Options:
+    - `url: string`
+    - `method?: 'POST' | 'PUT'` (default: POST)
+    - `headers?: Record<string, string>`
+    - `timeoutMs?: number` (default: 5000)
+    - `compress?: boolean` (gzip)
+    - `agent?: http.Agent | https.Agent`
+    - `level?: LogLevel`, `format?: LogFormat` (default format: `format.defaultJsonFormat`)
+
+- `transports.WebSocket(options: WebSocketTransportOptions)`  
+  Streams logs over WebSocket. Buffers messages until the socket is open. Requires `ws` in your app (`npm i ws`).
+  - Options:
+    - `url: string` (ws:// or wss://)
+    - `protocols?: string | string[]`
+    - `clientOptions?: any`
+    - `queueMax?: number` (default: 1000)
+    - `level?: LogLevel`, `format?: LogFormat`
+
+- `transports.Tcp(options: TcpTransportOptions)`  
+  Sends newline-delimited strings over TCP. Suitable for collectors expecting NDJSON.
+  - Options:
+    - `host: string`, `port: number`
+    - `reconnect?: boolean` (default: true)
+    - `level?: LogLevel`, `format?: LogFormat`
+
+- `transports.Udp(options: UdpTransportOptions)`  
+  Sends logs via UDP datagrams (best-effort, no backpressure).
+  - Options:
+    - `host: string`, `port: number`, `type?: 'udp4' | 'udp6'` (default: udp4)
+    - `level?: LogLevel`, `format?: LogFormat`
+
+Example (HTTP + batching):
+```ts
+import { createLogger, transports, format } from 'scribelog';
+
+const httpT = new transports.Http({
+  url: 'https://logs.example.com/ingest',
+  headers: { Authorization: 'Bearer abc' },
+  compress: true,
+  timeoutMs: 8000,
+});
+
+const batched = new transports.AsyncBatch({
+  target: httpT,
+  batchSize: 20,
+  flushIntervalMs: 1000,
+});
+
+const logger = createLogger({ transports: [batched], format: format.defaultJsonFormat });
+logger.info('Remote log', { service: 'payments' });
+```
+
+Notes:
+- WebSocket transport requires `ws` installed in your application.
+- For TCP/UDP, ensure your collector expects newline-delimited JSON or a compatible format.
+- Use `format.maskSensitive` to redact secrets in headers/body.
+- requestId is automatically attached from async context.
+
 ---
 
 ## 8. Child Loggers (`logger.child()`)
@@ -694,3 +880,70 @@ class MyTransport implements Transport {
     }
     // close() { ... }
 }
+```
+
+## 11. Framework Adapters
+
+Scribelog provides ready-to-use adapters for popular frameworks. They offer:
+- Automatic requestId propagation (AsyncLocalStorage)
+- Request/response logging with statusCode, durationMs, and framework tags
+- Optional header redaction (e.g., Authorization, Cookie)
+
+Common options (vary by adapter):
+- logger?: Logger – defaults to `createLogger()`
+- headerName?: string – header carrying the requestId (default: 'x-request-id')
+- generateId?: () => string – generator when header is missing
+- logRequest?: boolean – log request line (default: true)
+- logResponse?: boolean – log response line (default: true)
+- levelRequest?: LogLevel – level for request (e.g., 'http')
+- levelResponse?: LogLevel – level for response (e.g., 'info')
+- tags?: string[] – default adapter tags (e.g., ['express'])
+- redactHeaders?: string[] – headers to redact (e.g., ['authorization', 'cookie'])
+- maxHeaderValueLength?: number – truncate long header values (default: 256)
+
+Express:
+```ts
+import { adapters, createLogger } from 'scribelog';
+app.use(adapters.express.createMiddleware({
+  logger: createLogger(),
+  headerName: 'x-request-id',
+  redactHeaders: ['authorization', 'cookie', 'set-cookie'],
+}));
+```
+
+Koa:
+```ts
+import { adapters, createLogger } from 'scribelog';
+app.use(adapters.koa.createMiddleware({
+  logger: createLogger(),
+  levelRequest: 'http',
+  levelResponse: 'info',
+}));
+```
+
+Fastify:
+```ts
+import { adapters, createLogger } from 'scribelog';
+const register = adapters.fastify.createPlugin({ logger: createLogger() });
+register(fastify);
+```
+
+NestJS (global interceptor):
+```ts
+import { adapters, createLogger } from 'scribelog';
+app.useGlobalInterceptors(adapters.nest.createInterceptor({
+  logger: createLogger(),
+  headerName: 'x-request-id',
+}));
+```
+
+Next.js (API routes, Node runtime):
+```ts
+import { adapters, createLogger } from 'scribelog';
+export default adapters.next.createApiHandler(handler, { logger: createLogger() });
+```
+
+Notes:
+- Adapters rely on AsyncLocalStorage; Edge runtime (Next.js) may not support it.
+- Combine with `format.maskSensitive` to safely log headers/body.
+- requestId is automatically attached to logs (the logger reads it from async context).

@@ -10,10 +10,11 @@ export type LogLevel = string; // Zmieniono z _LogLevel
 
 // Interfejs LogInfo - używa teraz LogLevel = string
 export interface LogInfo {
-  level: LogLevel; // Używa teraz ogólnego typu string
+  level: LogLevel;
   message: any;
   timestamp: Date;
   splat?: any[];
+  tags?: string[]; // <-- Dodaj to pole
   [key: string]: any;
 }
 

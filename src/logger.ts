@@ -12,6 +12,7 @@ import type {
 import { ConsoleTransport } from './transports/console';
 import * as format from './format';
 import { _internalExit } from './utils';
+import { getRequestId } from './requestContext';
 // Nie potrzebujemy już utilFormat tutaj, bo jest w format.ts
 // import { format as utilFormat } from 'util';
 
@@ -146,6 +147,7 @@ export class Scribelog implements LoggerInterface {
   // Metody logowania poziomów (error, warn, info itd.) są generowane dynamicznie.
 
   // Metoda log
+  // ...existing code...
   public log(level: LogLevel, message: any, ...args: any[]): void {
     if (!this.isLevelEnabled(level)) return;
     const timestamp = new Date();
@@ -164,7 +166,17 @@ export class Scribelog implements LoggerInterface {
         splatArgs = args.slice(0, -1);
       }
     }
+    // --- POCZĄTEK ZMIANY: obsługa tags ---
     const metaData = { ...(this.defaultMeta || {}), ...(meta || {}) };
+    let tags: string[] | undefined = undefined;
+    if (Array.isArray(metaData.tags)) {
+      tags = metaData.tags;
+    }
+    const requestId = getRequestId();
+    if (requestId && !metaData.requestId) {
+      metaData.requestId = requestId;
+    }
+    // --- KONIEC ZMIANY ---
     let messageToSend: any = message;
     let errorToLog: Error | undefined = undefined;
     if (message instanceof Error) {
@@ -177,12 +189,14 @@ export class Scribelog implements LoggerInterface {
       timestamp,
       splat: splatArgs.length > 0 ? splatArgs : undefined,
       ...metaData,
+      ...(tags ? { tags } : {}),
     };
     if (errorToLog && !logEntry.error) {
       logEntry.error = errorToLog;
     }
     this.processAndTransport(logEntry);
   }
+// ...existing code...
 
   // Metoda logEntry
   public logEntry(entry: LogEntryInput): void {

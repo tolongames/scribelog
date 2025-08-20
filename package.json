@@ -65,6 +65,7 @@
   "dependencies": {
     "chalk": "^4.1.2",
     "date-fns": "^2.30.0",
+    "mongodb": "^6.18.0",
     "rotating-file-stream": "^3.2.6"
   }
 }
