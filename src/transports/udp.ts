@@ -46,6 +46,8 @@ export class UdpTransport implements Transport {
   close(): void {
     try {
       this.socket.close();
-    } catch { /* noop */ }
+    } catch {
+      /* noop */
+    }
   }
 }

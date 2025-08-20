@@ -29,7 +29,8 @@ function redactHeaders(
   const redactSet = new Set(redact.map((h) => h.toLowerCase()));
   for (const [k, v] of Object.entries(headers)) {
     const key = k.toLowerCase();
-    let val = typeof v === 'string' ? v : Array.isArray(v) ? v.join(', ') : String(v);
+    let val =
+      typeof v === 'string' ? v : Array.isArray(v) ? v.join(', ') : String(v);
     if (redactSet.has(key)) val = '***';
     if (maxLen > 0 && val.length > maxLen) val = val.slice(0, maxLen) + '…';
     out[key] = val;
@@ -60,7 +61,11 @@ export function createKoaMiddleware(options: KoaLoggerOptions = {}) {
 
     await runWithRequestContext({ requestId: String(rid) }, async () => {
       if (logRequest) {
-        const safeHeaders = redactHeaders(ctx.request.headers, redact, maxHeaderValueLength);
+        const safeHeaders = redactHeaders(
+          ctx.request.headers,
+          redact,
+          maxHeaderValueLength
+        );
         (logger as any)[levelRequest]('HTTP request', {
           requestId: rid,
           method: ctx.method,

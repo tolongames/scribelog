@@ -7,10 +7,7 @@ type ContextData = {
 
 const storage = new AsyncLocalStorage<ContextData>();
 
-export function runWithRequestContext<T>(
-  context: ContextData,
-  fn: () => T
-): T {
+export function runWithRequestContext<T>(context: ContextData, fn: () => T): T {
   return storage.run(context, fn);
 }
 

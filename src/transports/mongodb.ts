@@ -12,8 +12,8 @@ export interface MongoDBTransportOptions {
 export class MongoDBTransport implements Transport {
   public level?: LogLevel;
   public format?: LogFormat;
-  private client!: any;       // inicjalizowane w konstruktorze (definite assignment)
-  private collection!: any;   // inicjalizowane po connect() (definite assignment)
+  private client!: any; // inicjalizowane w konstruktorze (definite assignment)
+  private collection!: any; // inicjalizowane po connect() (definite assignment)
   private ready: Promise<void>;
 
   constructor(options: MongoDBTransportOptions) {

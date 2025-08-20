@@ -1,4 +1,3 @@
-
 # Scribelog 🪵📝
 
 [![npm version](https://img.shields.io/npm/v/scribelog.svg)](https://www.npmjs.com/package/scribelog)
@@ -13,21 +12,22 @@
 ## ✨ Key Features
 
 **Standard & Custom Logging Levels:** Use familiar levels (`error`, `warn`, `info`, etc.) or define your own custom levels.
-*   **Highly Flexible Formatting:** Combine powerful formatters (`simple`, `json`, `timestamp`, `metadata`, `errors`, `splat`) using a composable API (`format.combine`). Customize outputs easily, including color themes.
-*   **Printf-Style Logging:** Use `printf`-like placeholders (`%s`, `%d`, `%j`) via `format.splat()` for easy message interpolation.
-*   **Console Color Support:** Automatic, readable colorization for the `simple` format in TTY environments, with customizable themes.
-*   **Multiple Transports:** Log to different destinations. Built-in `ConsoleTransport` and `FileTransport` with rotation options.
-*   **Child Loggers:** Easily create contextual loggers (`logger.child({...})`) that inherit settings but add specific metadata (like `requestId`).
-*   **Framework adapters (Express, Koa, Fastify, NestJS, Next.js):**
-    Ready-to-use middleware/hooks/interceptors for request/response logging with automatic requestId (AsyncLocalStorage), duration, status, and framework tags. Minimal boilerplate.
-*   **Automatic Error Handling:** Optionally catch and log `uncaughtException` and `unhandledRejection` events, including stack traces.
-*   **Remote Transports (HTTP, WebSocket, TCP, UDP):**
-    Send logs over the network to ELK/Logstash, Graylog, Datadog, or custom collectors. Supports batching (AsyncBatch) and gzip (HTTP).
-*   **Tagging & Context:** Add tags to log messages for easy filtering and richer context. See examples in Quick Start.
-*   **Asynchronous Batch Logging:** Buffer and batch log messages before sending them to a target transport to reduce I/O overhead. See examples in Basic Configuration.
-*   **Automatic Request/Trace ID Propagation:** Automatically attaches a request/trace ID to every log message using AsyncLocalStorage. See usage in Basic Configuration.
-*   **Sensitive Data Masking:** Mask sensitive fields (passwords, tokens, API keys) with the built‑in `format.maskSensitive` formatter. See usage in Basic Configuration.
-*   **TypeScript First:** Written entirely in TypeScript for type safety and excellent editor autocompletion.
+
+- **Highly Flexible Formatting:** Combine powerful formatters (`simple`, `json`, `timestamp`, `metadata`, `errors`, `splat`) using a composable API (`format.combine`). Customize outputs easily, including color themes.
+- **Printf-Style Logging:** Use `printf`-like placeholders (`%s`, `%d`, `%j`) via `format.splat()` for easy message interpolation.
+- **Console Color Support:** Automatic, readable colorization for the `simple` format in TTY environments, with customizable themes.
+- **Multiple Transports:** Log to different destinations. Built-in `ConsoleTransport` and `FileTransport` with rotation options.
+- **Child Loggers:** Easily create contextual loggers (`logger.child({...})`) that inherit settings but add specific metadata (like `requestId`).
+- **Framework adapters (Express, Koa, Fastify, NestJS, Next.js):**
+  Ready-to-use middleware/hooks/interceptors for request/response logging with automatic requestId (AsyncLocalStorage), duration, status, and framework tags. Minimal boilerplate.
+- **Automatic Error Handling:** Optionally catch and log `uncaughtException` and `unhandledRejection` events, including stack traces.
+- **Remote Transports (HTTP, WebSocket, TCP, UDP):**
+  Send logs over the network to ELK/Logstash, Graylog, Datadog, or custom collectors. Supports batching (AsyncBatch) and gzip (HTTP).
+- **Tagging & Context:** Add tags to log messages for easy filtering and richer context. See examples in Quick Start.
+- **Asynchronous Batch Logging:** Buffer and batch log messages before sending them to a target transport to reduce I/O overhead. See examples in Basic Configuration.
+- **Automatic Request/Trace ID Propagation:** Automatically attaches a request/trace ID to every log message using AsyncLocalStorage. See usage in Basic Configuration.
+- **Sensitive Data Masking:** Mask sensitive fields (passwords, tokens, API keys) with the built‑in `format.maskSensitive` formatter. See usage in Basic Configuration.
+- **TypeScript First:** Written entirely in TypeScript for type safety and excellent editor autocompletion.
 
 ---
 
@@ -102,11 +102,11 @@ This README covers the basics. For a comprehensive guide covering **all configur
 
 Configure your logger via `createLogger(options)`. Key options:
 
-*   `level`: `'info'` (default), `'debug'`, `'warn'`, etc., or **custom levels** (e.g., `'critical'`, `'trace'`).
-*   `format`: Use `format.combine(...)` with formatters like `format.simple()`, `format.json()`, `format.timestamp()`, `format.splat()`, `format.errors()`, `format.metadata()`. Default is `format.defaultSimpleFormat`. You can also define **custom color themes** for log levels.
-*   `transports`: Array of `new transports.Console({...})` or `new transports.File({...})`. Default is one Console transport.
-*   `defaultMeta`: An object with data to add to every log message.
-*   `handleExceptions`, `handleRejections`, `exitOnError`: For automatic error catching.
+- `level`: `'info'` (default), `'debug'`, `'warn'`, etc., or **custom levels** (e.g., `'critical'`, `'trace'`).
+- `format`: Use `format.combine(...)` with formatters like `format.simple()`, `format.json()`, `format.timestamp()`, `format.splat()`, `format.errors()`, `format.metadata()`. Default is `format.defaultSimpleFormat`. You can also define **custom color themes** for log levels.
+- `transports`: Array of `new transports.Console({...})` or `new transports.File({...})`. Default is one Console transport.
+- `defaultMeta`: An object with data to add to every log message.
+- `handleExceptions`, `handleRejections`, `exitOnError`: For automatic error catching.
 
 **Example 1: Logging JSON to a File**
 
@@ -120,16 +120,19 @@ const fileJsonLogger = createLogger({
   transports: [
     new transports.File({
       filename: 'application.log', // Log to application.log
-      level: 'debug',             // Log debug and above to the file
-      size: '10M',                // Rotate at 10 MB
-      maxFiles: 5                 // Keep 5 rotated files
-    })
+      level: 'debug', // Log debug and above to the file
+      size: '10M', // Rotate at 10 MB
+      maxFiles: 5, // Keep 5 rotated files
+    }),
   ],
-  defaultMeta: { service: 'file-writer' }
+  defaultMeta: { service: 'file-writer' },
 });
 
 fileJsonLogger.debug('Writing JSON log to file', { id: 1 });
-fileJsonLogger.error('File write error occurred', { error: new Error('Disk full'), file: 'data.txt' });
+fileJsonLogger.error('File write error occurred', {
+  error: new Error('Disk full'),
+  file: 'data.txt',
+});
 ```
 
 **Example 2: Using Custom Levels and Colors**
@@ -179,8 +182,8 @@ const fileTransport = new transports.File({ filename: 'batched.log' });
 
 const asyncBatch = new transports.AsyncBatch({
   target: fileTransport,
-  batchSize: 5,         // Send logs in batches of 5
-  flushIntervalMs: 2000 // Or every 2 seconds
+  batchSize: 5, // Send logs in batches of 5
+  flushIntervalMs: 2000, // Or every 2 seconds
 });
 
 const logger = createLogger({ transports: [asyncBatch] });
@@ -224,7 +227,7 @@ logger.info('User login', {
   username: 'bob',
   password: 'sekret123',
   token: 'abc',
-  profile: { apiKey: 'xyz' }
+  profile: { apiKey: 'xyz' },
 });
 // Output (example): password: '***', token: '***', profile: { apiKey: '***' }
 ```
@@ -232,6 +235,7 @@ logger.info('User login', {
 ## Framework adapters (quick integration)
 
 Express:
+
 ```ts
 import express from 'express';
 import { createLogger, adapters } from 'scribelog';
@@ -242,6 +246,7 @@ app.use(adapters.express.createMiddleware({ logger }));
 ```
 
 Koa:
+
 ```ts
 import Koa from 'koa';
 import { createLogger, adapters } from 'scribelog';
@@ -252,6 +257,7 @@ app.use(adapters.koa.createMiddleware({ logger }));
 ```
 
 Fastify:
+
 ```ts
 import Fastify from 'fastify';
 import { createLogger, adapters } from 'scribelog';
@@ -263,6 +269,7 @@ register(app);
 ```
 
 NestJS (global interceptor):
+
 ```ts
 import { adapters, createLogger } from 'scribelog';
 const app = await NestFactory.create(AppModule);
@@ -271,25 +278,30 @@ app.useGlobalInterceptors(adapters.nest.createInterceptor({ logger }));
 ```
 
 Next.js (API Route):
+
 ```ts
 import { adapters, createLogger } from 'scribelog';
 const logger = createLogger();
-export default adapters.next.createApiHandler(async (req, res) => {
-  res.statusCode = 200;
-  res.end('OK');
-}, { logger });
+export default adapters.next.createApiHandler(
+  async (req, res) => {
+    res.statusCode = 200;
+    res.end('OK');
+  },
+  { logger }
+);
 ```
 
 ## Remote transports (network logging)
 
 HTTP (+ batching + gzip):
+
 ```ts
 import { createLogger, transports, format } from 'scribelog';
 
 const httpT = new transports.Http({
   url: 'https://logs.example.com/ingest',
   headers: { 'x-api-key': 'your-key' },
-  compress: true,       // gzip the body
+  compress: true, // gzip the body
   timeoutMs: 8000,
   // format defaults to format.defaultJsonFormat if not provided
 });
@@ -300,11 +312,15 @@ const batched = new transports.AsyncBatch({
   flushIntervalMs: 1000,
 });
 
-const logger = createLogger({ transports: [batched], format: format.defaultJsonFormat });
+const logger = createLogger({
+  transports: [batched],
+  format: format.defaultJsonFormat,
+});
 logger.info('Remote log', { service: 'api' });
 ```
 
 WebSocket (requires ws: npm i ws):
+
 ```ts
 import { createLogger, transports } from 'scribelog';
 
@@ -314,16 +330,22 @@ logger.error('Streamed error', { code: 500 });
 ```
 
 TCP (newline-delimited JSON) + batching:
+
 ```ts
 import { createLogger, transports } from 'scribelog';
 
 const tcp = new transports.Tcp({ host: '127.0.0.1', port: 5000 });
-const batched = new transports.AsyncBatch({ target: tcp, batchSize: 50, flushIntervalMs: 500 });
+const batched = new transports.AsyncBatch({
+  target: tcp,
+  batchSize: 50,
+  flushIntervalMs: 500,
+});
 const logger = createLogger({ transports: [batched] });
 logger.info('Hello over TCP', { env: 'prod' });
 ```
 
 UDP (best-effort, e.g., GELF-like):
+
 ```ts
 import { createLogger, transports } from 'scribelog';
 
@@ -333,6 +355,7 @@ logger.warn('Warning via UDP');
 ```
 
 Notes:
+
 - Prefer JSON format for collectors: use format.defaultJsonFormat.
 - Use AsyncBatch to reduce network overhead and smooth bursts.
 - Redact secrets before sending: format.maskSensitive([...]).

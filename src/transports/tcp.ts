@@ -49,7 +49,9 @@ export class TcpTransport implements Transport {
         setTimeout(() => {
           try {
             this.socket.connect(this.port, this.host);
-          } catch { /* noop */ }
+          } catch {
+            /* noop */
+          }
         }, 500);
       }
     });
@@ -79,6 +81,8 @@ export class TcpTransport implements Transport {
       this.reconnect = false;
       this.socket.end();
       this.socket.destroy();
-    } catch { /* noop */ }
+    } catch {
+      /* noop */
+    }
   }
 }

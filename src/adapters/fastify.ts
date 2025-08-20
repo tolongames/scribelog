@@ -29,7 +29,8 @@ function redactHeaders(
   const redactSet = new Set(redact.map((h) => h.toLowerCase()));
   for (const [k, v] of Object.entries(headers)) {
     const key = k.toLowerCase();
-    let val = typeof v === 'string' ? v : Array.isArray(v) ? v.join(', ') : String(v);
+    let val =
+      typeof v === 'string' ? v : Array.isArray(v) ? v.join(', ') : String(v);
     if (redactSet.has(key)) val = '***';
     if (maxLen > 0 && val.length > maxLen) val = val.slice(0, maxLen) + '…';
     out[key] = val;
@@ -63,7 +64,11 @@ export function createFastifyPlugin(options: FastifyLoggerOptions = {}) {
 
       runWithRequestContext({ requestId: String(rid) }, () => {
         if (logRequest) {
-          const safeHeaders = redactHeaders(req.headers, redact, maxHeaderValueLength);
+          const safeHeaders = redactHeaders(
+            req.headers,
+            redact,
+            maxHeaderValueLength
+          );
           (logger as any)[levelRequest]('HTTP request', {
             requestId: rid,
             method: req.method,
@@ -80,14 +85,17 @@ export function createFastifyPlugin(options: FastifyLoggerOptions = {}) {
       const start: bigint | undefined = (req as any).__scribelogStart;
       const rid: string | undefined = (req as any).__scribelogRequestId;
       const durationMs =
-        start !== undefined ? Number(process.hrtime.bigint() - start) / 1e6 : undefined;
+        start !== undefined
+          ? Number(process.hrtime.bigint() - start) / 1e6
+          : undefined;
       if (logResponse) {
         (logger as any)[levelResponse]('HTTP response', {
           requestId: rid,
           method: req.method,
           url: req.url,
           statusCode: reply.statusCode,
-          durationMs: durationMs !== undefined ? Math.round(durationMs) : undefined,
+          durationMs:
+            durationMs !== undefined ? Math.round(durationMs) : undefined,
           tags,
         });
       }

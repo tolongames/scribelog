@@ -415,8 +415,7 @@ export function maskSensitive(
     if (obj && typeof obj === 'object') {
       for (const key of Object.keys(obj)) {
         if (fields.includes(key)) {
-          obj[key] =
-            typeof mask === 'function' ? mask(obj[key], key) : mask;
+          obj[key] = typeof mask === 'function' ? mask(obj[key], key) : mask;
         } else if (typeof obj[key] === 'object' && obj[key] !== null) {
           obj[key] = maskObject(obj[key]);
         }
@@ -447,8 +446,7 @@ export function maskSensitive(
           info[key] = maskObject(info[key]);
         }
         if (fields.includes(key)) {
-          info[key] =
-            typeof mask === 'function' ? mask(info[key], key) : mask;
+          info[key] = typeof mask === 'function' ? mask(info[key], key) : mask;
         }
       }
     }

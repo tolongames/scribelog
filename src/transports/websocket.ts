@@ -36,7 +36,11 @@ export class WebSocketTransport implements Transport {
     }
 
     if (this.WSClass) {
-      this.ws = new this.WSClass(options.url, options.protocols, options.clientOptions);
+      this.ws = new this.WSClass(
+        options.url,
+        options.protocols,
+        options.clientOptions
+      );
       this.ws.on('open', () => {
         this.ready = true;
         // Wyślij zaległą kolejkę
@@ -81,6 +85,8 @@ export class WebSocketTransport implements Transport {
   close(): void {
     try {
       this.ws?.close();
-    } catch { /* noop */ }
+    } catch {
+      /* noop */
+    }
   }
 }

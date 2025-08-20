@@ -33,7 +33,7 @@ export function createNestInterceptor(opts: NestLoggerOptions = {}) {
     intercept(ctx: any, next: any) {
       const req = ctx.switchToHttp?.().getRequest?.() ?? ctx.getRequest?.();
       const res = ctx.switchToHttp?.().getResponse?.() ?? ctx.getResponse?.();
-      const rid = (req?.headers?.[headerName]) || generateId();
+      const rid = req?.headers?.[headerName] || generateId();
       const start = process.hrtime.bigint();
 
       return runWithRequestContext({ requestId: String(rid) }, () => {

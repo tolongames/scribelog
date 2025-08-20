@@ -405,7 +405,6 @@ describe('Custom Levels', () => {
   /* ... */
 });
 
-
 // ...existing code...
 describe('Scribelog tags support', () => {
   it('should include tags in log info and formatted output', (done) => {
@@ -528,7 +527,11 @@ describe('AsyncBatchTransport', () => {
 // ...existing code...
 describe('RequestContext integration', () => {
   it('should automatically add requestId from context to log entry', (done) => {
-    const { createLogger, runWithRequestContext, setRequestId } = require('../src');
+    const {
+      createLogger,
+      runWithRequestContext,
+      setRequestId,
+    } = require('../src');
     const logs: any[] = [];
     const logger = createLogger({
       transports: [
@@ -610,7 +613,11 @@ describe('MongoDBTransport', () => {
     });
     // Poczekaj na inicjalizację
     await transport['ready'];
-    await transport.log({ level: 'info', message: 'mongo test', timestamp: new Date() });
+    await transport.log({
+      level: 'info',
+      message: 'mongo test',
+      timestamp: new Date(),
+    });
     expect(insertOneMock).toHaveBeenCalled();
     await transport.close();
     expect(closeMock).toHaveBeenCalled();
@@ -624,9 +631,14 @@ describe('SQLTransport', () => {
     const { SQLTransport } = require('../src/transports/sql');
     const transport = new SQLTransport({
       client: clientMock,
-      insertQuery: 'INSERT INTO logs(level, message, timestamp, meta) VALUES ($1, $2, $3, $4)',
+      insertQuery:
+        'INSERT INTO logs(level, message, timestamp, meta) VALUES ($1, $2, $3, $4)',
     });
-    await transport.log({ level: 'info', message: 'sql test', timestamp: new Date() });
+    await transport.log({
+      level: 'info',
+      message: 'sql test',
+      timestamp: new Date(),
+    });
     expect(queryMock).toHaveBeenCalled();
   });
 });
@@ -687,7 +699,10 @@ describe('Framework adapters', () => {
     const { adapters } = require('../src');
     const { logger, logs } = makeMemoryLogger();
 
-    const mw = adapters.koa.createMiddleware({ logger, headerName: 'x-request-id' });
+    const mw = adapters.koa.createMiddleware({
+      logger,
+      headerName: 'x-request-id',
+    });
     const ctx: any = {
       method: 'POST',
       url: '/koa',
@@ -757,7 +772,11 @@ describe('Framework adapters', () => {
     const { logger, logs } = makeMemoryLogger();
 
     const interceptor = adapters.nest.createInterceptor({ logger });
-    const req: any = { method: 'PUT', url: '/nest', headers: { 'x-request-id': 'rid-nest-1' } };
+    const req: any = {
+      method: 'PUT',
+      url: '/nest',
+      headers: { 'x-request-id': 'rid-nest-1' },
+    };
     const res: any = { statusCode: 202 };
 
     const ctx: any = {
@@ -793,7 +812,11 @@ describe('Framework adapters', () => {
       { logger }
     );
 
-    const req: any = { method: 'GET', url: '/api/hello', headers: { 'x-request-id': 'rid-next-1' } };
+    const req: any = {
+      method: 'GET',
+      url: '/api/hello',
+      headers: { 'x-request-id': 'rid-next-1' },
+    };
     const res: any = { statusCode: 0 };
 
     await handler(req, res);
@@ -821,24 +844,26 @@ describe('Remote transports', () => {
     const onMock = jest.fn();
     const setTimeoutMock = jest.fn();
 
-    const requestSpy = jest.spyOn(http, 'request').mockImplementation((_opts: any, cb: any) => {
-      // Mock response to consume and end
-      const { EventEmitter } = require('events');
-      const res = new EventEmitter();
-      res.statusCode = 200;
-      setImmediate(() => {
-        cb && cb(res);
-        res.emit('data', Buffer.from('OK'));
-        res.emit('end');
-      });
+    const requestSpy = jest
+      .spyOn(http, 'request')
+      .mockImplementation((_opts: any, cb: any) => {
+        // Mock response to consume and end
+        const { EventEmitter } = require('events');
+        const res = new EventEmitter();
+        res.statusCode = 200;
+        setImmediate(() => {
+          cb && cb(res);
+          res.emit('data', Buffer.from('OK'));
+          res.emit('end');
+        });
 
-      return {
-        setTimeout: setTimeoutMock,
-        on: onMock,
-        write: writeMock,
-        end: endMock,
-      } as any;
-    });
+        return {
+          setTimeout: setTimeoutMock,
+          on: onMock,
+          write: writeMock,
+          end: endMock,
+        } as any;
+      });
 
     const t = new HttpTransport({
       url: 'http://localhost:12345/ingest',
@@ -860,47 +885,47 @@ describe('Remote transports', () => {
   });
 
   // ...existing code...
-it('WebSocketTransport sends message after open', (done) => {
-  jest.resetModules();
-  jest.isolateModules(() => {
-    jest.doMock(
-      'ws',
-      () => {
-        const { EventEmitter } = require('events');
-        return class MockWS extends EventEmitter {
-          public _sent: string[] = [];
-          constructor() {
-            super();
-            // Emit 'open' on next tick so listeners are attached
-            setImmediate(() => this.emit('open'));
-          }
-          send(data: any) {
-            this._sent.push(String(data));
-          }
-          close() {}
-        };
-      },
-      { virtual: true } // <<< important: mock module that isn't installed
-    );
+  it('WebSocketTransport sends message after open', (done) => {
+    jest.resetModules();
+    jest.isolateModules(() => {
+      jest.doMock(
+        'ws',
+        () => {
+          const { EventEmitter } = require('events');
+          return class MockWS extends EventEmitter {
+            public _sent: string[] = [];
+            constructor() {
+              super();
+              // Emit 'open' on next tick so listeners are attached
+              setImmediate(() => this.emit('open'));
+            }
+            send(data: any) {
+              this._sent.push(String(data));
+            }
+            close() {}
+          };
+        },
+        { virtual: true } // <<< important: mock module that isn't installed
+      );
 
-    const { WebSocketTransport } = require('../src/transports/websocket');
-    const t = new WebSocketTransport({
-      url: 'ws://localhost:12346',
-      format: (info: any) => info,
+      const { WebSocketTransport } = require('../src/transports/websocket');
+      const t = new WebSocketTransport({
+        url: 'ws://localhost:12346',
+        format: (info: any) => info,
+      });
+
+      t.log({ level: 'info', message: 'ws test', timestamp: new Date() });
+
+      setTimeout(() => {
+        const wsInstance = (t as any).ws;
+        expect(wsInstance).toBeDefined();
+        expect(wsInstance._sent?.length).toBeGreaterThan(0);
+        expect(wsInstance._sent[0]).toContain('ws test');
+        done();
+      }, 20);
     });
-
-    t.log({ level: 'info', message: 'ws test', timestamp: new Date() });
-
-    setTimeout(() => {
-      const wsInstance = (t as any).ws;
-      expect(wsInstance).toBeDefined();
-      expect(wsInstance._sent?.length).toBeGreaterThan(0);
-      expect(wsInstance._sent[0]).toContain('ws test');
-      done();
-    }, 20);
   });
-});
-// ...existing code...
+  // ...existing code...
 
   it('TcpTransport writes newline-delimited log after connect', (done) => {
     jest.resetModules();
@@ -952,9 +977,11 @@ it('WebSocketTransport sends message after open', (done) => {
     let sendMock: jest.Mock;
     jest.isolateModules(() => {
       jest.doMock('dgram', () => {
-        sendMock = jest.fn((buf: Buffer, _port: number, _host: string, cb?: Function) => {
-          cb && cb(null);
-        });
+        sendMock = jest.fn(
+          (buf: Buffer, _port: number, _host: string, cb?: Function) => {
+            cb && cb(null);
+          }
+        );
         return {
           createSocket: jest.fn(() => ({
             send: sendMock,

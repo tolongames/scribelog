@@ -196,7 +196,7 @@ export class Scribelog implements LoggerInterface {
     }
     this.processAndTransport(logEntry);
   }
-// ...existing code...
+  // ...existing code...
 
   // Metoda logEntry
   public logEntry(entry: LogEntryInput): void {

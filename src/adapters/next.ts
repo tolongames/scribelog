@@ -33,7 +33,7 @@ export function createNextApiHandler<T extends (...args: any[]) => any>(
   } = opts;
 
   const wrapped = ((req: any, res: any, ...rest: any[]) => {
-    const rid = (req?.headers?.[headerName]) || generateId();
+    const rid = req?.headers?.[headerName] || generateId();
     const start = process.hrtime.bigint();
 
     return runWithRequestContext({ requestId: String(rid) }, async () => {

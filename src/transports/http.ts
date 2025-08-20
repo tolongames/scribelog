@@ -33,7 +33,10 @@ export class HttpTransport implements Transport {
     this.url = new URL(options.url);
     this.isHttps = this.url.protocol === 'https:';
     this.method = options.method || 'POST';
-    this.headers = { 'content-type': 'application/json', ...(options.headers || {}) };
+    this.headers = {
+      'content-type': 'application/json',
+      ...(options.headers || {}),
+    };
     this.timeoutMs = options.timeoutMs ?? 5000;
     this.agent = options.agent;
     this.compress = !!options.compress;
@@ -48,10 +51,7 @@ export class HttpTransport implements Transport {
       }
     } else {
       const out = (this.format || format.defaultJsonFormat)(processedEntry);
-      bodyStr =
-        typeof out === 'string'
-          ? out
-          : JSON.stringify(out); // fallback, gdy format zwróci obiekt
+      bodyStr = typeof out === 'string' ? out : JSON.stringify(out); // fallback, gdy format zwróci obiekt
       this.headers['content-type'] = 'application/json';
     }
 

@@ -20,7 +20,8 @@ Instead, report it responsibly through one of the following methods:
   Send an email to **[theonlytolon@proton.me]**
 
 ### What to Expect
-- We will confirm receipt of your report within **48 hours**.  
-- We aim to provide an initial assessment within **7 days**.  
-- If the vulnerability is accepted, a fix will be prepared and released as soon as possible.  
+
+- We will confirm receipt of your report within **48 hours**.
+- We aim to provide an initial assessment within **7 days**.
+- If the vulnerability is accepted, a fix will be prepared and released as soon as possible.
 - You will be credited (if you want) in the release notes.
