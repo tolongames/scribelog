@@ -1,3 +1,5 @@
+permissions:
+  contents: read
 name: Node.js CI & Publish
 
 on:
