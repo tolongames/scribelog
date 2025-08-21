@@ -28,9 +28,12 @@ export class Scribelog implements LoggerInterface {
   public levels: LogLevels; // Nadal Record<string, number>
   public level: LogLevel; // Teraz string
   private transports: Transport[];
+  private profiles = new Map<string, bigint>();
   private format: LogFormat;
   private defaultMeta?: Record<string, any>;
   private options: LoggerOptions; // Przechowuje ORYGINALNE opcje konfiguracyjne
+
+  private profileStartMeta = new Map<string, Record<string, any>>();
 
   private exitOnError: boolean;
   private exceptionHandler?: (err: Error) => void;
@@ -197,7 +200,112 @@ export class Scribelog implements LoggerInterface {
     this.processAndTransport(logEntry);
   }
   // ...existing code...
+  public profile(label: string, meta?: Record<string, any>): void {
+    this.profiles.set(label, process.hrtime.bigint());
+    if (meta && typeof meta === 'object') {
+      this.profileStartMeta.set(label, meta);
+    }
+    // opcjonalny log startu...
+  }
 
+  public profileEnd(label: string, meta?: Record<string, any>): void {
+    const start = this.profiles.get(label);
+    const end = process.hrtime.bigint();
+    const durationMs =
+      start !== undefined ? Number(end - start) / 1e6 : undefined;
+    if (start !== undefined) this.profiles.delete(label);
+
+    // SCAL meta: start + end (koniec nadpisuje start)
+    const startMeta = this.profileStartMeta.get(label);
+    this.profileStartMeta.delete(label);
+
+    const metaOut: Record<string, any> = {
+      ...(startMeta || {}),
+      ...(meta || {}),
+      profileLabel: label,
+      ...(durationMs !== undefined
+        ? { durationMs: Math.round(durationMs) }
+        : {}),
+    };
+
+    // tag 'profile'
+    if (Array.isArray(metaOut.tags)) {
+      metaOut.tags = [...metaOut.tags, 'profile'];
+    } else {
+      metaOut.tags = ['profile'];
+    }
+    this.log('debug', label, metaOut);
+  }
+
+  // Alias: time/timeEnd
+  public time(label: string, meta?: Record<string, any>): void {
+    this.profile(label, meta);
+  }
+  public timeEnd(label: string, meta?: Record<string, any>): void {
+    this.profileEnd(label, meta);
+  }
+
+  // Wygodne pomiary bloków sync/async
+  public timeSync<T>(
+    label: string,
+    fn: () => T,
+    meta?: Record<string, any>
+  ): T {
+    const start = process.hrtime.bigint();
+    try {
+      return fn();
+    } finally {
+      const durationMs = Number(process.hrtime.bigint() - start) / 1e6;
+      const metaOut: Record<string, any> = {
+        ...(meta || {}),
+        profileLabel: label,
+        durationMs: Math.round(durationMs),
+        success: true,
+        tags: Array.isArray(meta?.tags)
+          ? [...meta!.tags, 'profile']
+          : ['profile'],
+      };
+      this.log('debug', label, metaOut);
+    }
+  }
+
+  public async timeAsync<T>(
+    label: string,
+    fn: () => Promise<T>,
+    meta?: Record<string, any>
+  ): Promise<T> {
+    const start = process.hrtime.bigint();
+    try {
+      const result = await fn();
+      const durationMs = Number(process.hrtime.bigint() - start) / 1e6;
+      const metaOut: Record<string, any> = {
+        ...(meta || {}),
+        profileLabel: label,
+        durationMs: Math.round(durationMs),
+        success: true,
+        tags: Array.isArray(meta?.tags)
+          ? [...meta!.tags, 'profile']
+          : ['profile'],
+      };
+      this.log('debug', label, metaOut);
+      return result;
+    } catch (error) {
+      const durationMs = Number(process.hrtime.bigint() - start) / 1e6;
+      const metaOut: Record<string, any> = {
+        ...(meta || {}),
+        profileLabel: label,
+        durationMs: Math.round(durationMs),
+        success: false,
+        error,
+        tags: Array.isArray(meta?.tags)
+          ? [...meta!.tags, 'profile']
+          : ['profile'],
+      };
+      // Błąd też logujemy na 'debug' z polem error (format.error() go obsłuży)
+      this.log('debug', label, metaOut);
+      throw error;
+    }
+  }
   // Metoda logEntry
   public logEntry(entry: LogEntryInput): void {
     const level = entry.level || 'info';

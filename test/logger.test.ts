@@ -1,16 +1,16 @@
 // test/logger.test.ts
 import {
   createLogger,
-  Scribelog,
   Logger,
   LoggerOptions,
   LogLevels,
   LogInfo,
-  Transport,
   format,
   transports,
   standardLevels,
 } from '../src/index';
+import { Scribelog } from '../src/logger';
+import type { Transport, LogFormat, LogLevel } from '../src/types';
 // Usuwamy nieużywany import formatDate, jeśli nie jest potrzebny w innych częściach pliku
 // import { format as formatDate } from 'date-fns';
 import chalk from 'chalk';
@@ -1007,5 +1007,127 @@ describe('Remote transports', () => {
       expect(port).toBe(12201);
       expect(host).toBe('127.0.0.1');
     });
+  });
+});
+
+class TestTransport implements Transport {
+  level?: LogLevel;
+  format?: LogFormat;
+  public outputs: any[] = [];
+  constructor(opts?: { level?: LogLevel; format?: LogFormat }) {
+    this.level = opts?.level;
+    this.format = opts?.format;
+  }
+  log(output: any): void {
+    this.outputs.push(output);
+  }
+}
+
+const identityFormat: LogFormat = (info: any) => info;
+
+function buildTestLogger(level: LogLevel = 'debug') {
+  const transport = new TestTransport({ level: 'debug' });
+  const logger = new Scribelog({
+    level,
+    transports: [transport],
+    format: identityFormat,
+  });
+  return { logger, transport };
+}
+
+function sleep(ms: number) {
+  return new Promise((res) => setTimeout(res, ms));
+}
+
+describe('profiling & timing API', () => {
+  test('profile/profileEnd logs duration with tag', async () => {
+    const { logger, transport } = buildTestLogger('debug');
+
+    logger.profile('db');
+    await sleep(5);
+    logger.profileEnd('db', { query: 'SELECT 1' });
+
+    expect(transport.outputs.length).toBeGreaterThan(0);
+    const entry = transport.outputs.at(-1);
+    expect(entry.level).toBe('debug');
+    expect(entry.message).toBe('db');
+    expect(entry.profileLabel).toBe('db');
+    expect(typeof entry.durationMs).toBe('number');
+    expect(entry.durationMs).toBeGreaterThanOrEqual(0);
+    expect(Array.isArray(entry.tags)).toBe(true);
+    expect(entry.tags).toContain('profile');
+    expect(entry.query).toBe('SELECT 1');
+  });
+
+  test('time/timeEnd aliases behave like profile/profileEnd', async () => {
+    const { logger, transport } = buildTestLogger('debug');
+
+    logger.time('alias', { a: 1 });
+    await sleep(3);
+    logger.timeEnd('alias', { b: 2 });
+
+    const entry = transport.outputs.at(-1);
+    expect(entry.message).toBe('alias');
+    expect(entry.profileLabel).toBe('alias');
+    expect(entry.durationMs).toBeGreaterThanOrEqual(0);
+    expect(entry.tags).toContain('profile');
+    expect(entry.a).toBe(1); // meta z startu nie jest wymagana, ale jeśli przekażesz na end – jest scalana
+    expect(entry.b).toBe(2);
+  });
+
+  test('timeSync wraps sync function and logs success', () => {
+    const { logger, transport } = buildTestLogger('debug');
+
+    const res = logger.timeSync('calc', () => 2 + 2, { component: 'math' });
+    expect(res).toBe(4);
+
+    const entry = transport.outputs.at(-1);
+    expect(entry.message).toBe('calc');
+    expect(entry.profileLabel).toBe('calc');
+    expect(entry.success).toBe(true);
+    expect(entry.tags).toContain('profile');
+    expect(typeof entry.durationMs).toBe('number');
+  });
+
+  test('timeAsync wraps async function (success)', async () => {
+    const { logger, transport } = buildTestLogger('debug');
+
+    const result = await logger.timeAsync(
+      'io',
+      async () => {
+        await sleep(4);
+        return 42;
+      },
+      { component: 'io' }
+    );
+    expect(result).toBe(42);
+
+    const entry = transport.outputs.at(-1);
+    expect(entry.message).toBe('io');
+    expect(entry.profileLabel).toBe('io');
+    expect(entry.success).toBe(true);
+    expect(entry.tags).toContain('profile');
+    expect(typeof entry.durationMs).toBe('number');
+  });
+
+  test('timeAsync logs on error and rethrows', async () => {
+    const { logger, transport } = buildTestLogger('debug');
+    const before = transport.outputs.length;
+
+    await expect(
+      logger.timeAsync('bad', async () => {
+        await sleep(2);
+        throw new Error('fail');
+      })
+    ).rejects.toThrow('fail');
+
+    const entry = transport.outputs.slice(before).at(-1);
+    expect(entry.message).toBe('bad');
+    expect(entry.profileLabel).toBe('bad');
+    expect(entry.success).toBe(false);
+    expect(entry.tags).toContain('profile');
+    expect(typeof entry.durationMs).toBe('number');
+    expect(entry.error).toBeTruthy();
+    expect(String(entry.error.message)).toContain('fail');
   });
 });

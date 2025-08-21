@@ -86,6 +86,21 @@ interface BaseLoggerInterface {
   addTransport(transport: Transport): void;
   removeExceptionHandlers?(): void;
   child(defaultMeta: Record<string, any>): LoggerInterface; // Zwraca pełny interfejs
+
+  profile(label: string, meta?: Record<string, any>): void;
+  profileEnd(label: string, meta?: Record<string, any>): void;
+
+  // Alias do profile/profileEnd
+  time(label: string, meta?: Record<string, any>): void;
+  timeEnd(label: string, meta?: Record<string, any>): void;
+
+  // Wygodne pomiary bloków
+  timeSync<T>(label: string, fn: () => T, meta?: Record<string, any>): T;
+  timeAsync<T>(
+    label: string,
+    fn: () => Promise<T>,
+    meta?: Record<string, any>
+  ): Promise<T>;
 }
 
 // Typ reprezentujący metody dla poziomów logowania (np. logger.info, logger.debug)

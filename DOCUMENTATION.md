@@ -223,7 +223,7 @@ warnLogger.info('This will NOT be logged.');
 warnLogger.warn('This WILL be logged.');
 
 // Log everything
-const debugLogger = createLogger({ level: 'debug' });
+const debugLogger = createLogger({ level: 'silly' });
 debugLogger.debug('This will be logged.');
 ```
 
@@ -993,3 +993,44 @@ Notes:
 - Adapters rely on AsyncLocalStorage; Edge runtime (Next.js) may not support it.
 - Combine with `format.maskSensitive` to safely log headers/body.
 - requestId is automatically attached to logs (the logger reads it from async context).
+
+## 12. Profiling & Timing
+
+Scribelog provides a lightweight, high‑resolution timing API. You can start/stop timers manually, or wrap synchronous and asynchronous blocks. Metadata passed at the start is merged with metadata at the end.
+
+### API Surface
+
+- logger.profile(label, meta?)
+- logger.profileEnd(label, meta?)
+- logger.time(label, meta?) // alias of profile
+- logger.timeEnd(label, meta?) // alias of profileEnd
+- logger.timeSync(label, fn, meta?)
+- logger.timeAsync(label, fn, meta?)
+
+### Examples
+
+```ts
+// Start/stop
+logger.profile('db');
+await db.query('SELECT 1');
+logger.profileEnd('db', { query: 'SELECT 1' });
+
+// Sync block
+const result = logger.timeSync('calc', () => 2 + 2, { component: 'math' });
+
+// Async block (success/error)
+await logger.timeAsync(
+  'fetch-user',
+  async () => {
+    return await getUser(42);
+  },
+  { component: 'users' }
+);
+```
+
+Each emitted profile log contains:
+
+- message: label
+- profileLabel, durationMs, tags: ['profile']
+- any custom meta provided
+- requestId automatically included when request context is active

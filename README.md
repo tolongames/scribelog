@@ -20,6 +20,7 @@
 - **Child Loggers:** Easily create contextual loggers (`logger.child({...})`) that inherit settings but add specific metadata (like `requestId`).
 - **Framework adapters (Express, Koa, Fastify, NestJS, Next.js):**
   Ready-to-use middleware/hooks/interceptors for request/response logging with automatic requestId (AsyncLocalStorage), duration, status, and framework tags. Minimal boilerplate.
+- **Profiling & Timing:** Lightweight high-resolution timers (profile/time APIs), including sync/async helpers and start/end merging of metadata.
 - **Automatic Error Handling:** Optionally catch and log `uncaughtException` and `unhandledRejection` events, including stack traces.
 - **Remote Transports (HTTP, WebSocket, TCP, UDP):**
   Send logs over the network to ELK/Logstash, Graylog, Datadog, or custom collectors. Supports batching (AsyncBatch) and gzip (HTTP).
@@ -87,6 +88,40 @@ Error: Test error
     at <anonymous>:... (stack trace)
 2025-05-01T12:00:00.130Z [INFO] [auth, user]: User login { userId: 123 }
 ```
+
+## ⏱️ Profiling & Timing
+
+Measure durations with high‑resolution timers and structured metadata. Start a timer and finish it later, or wrap sync/async blocks. Metadata passed at start is merged with metadata at end.
+
+```ts
+// Manual start/stop
+logger.profile('db');
+await db.query('SELECT 1');
+logger.profileEnd('db', { query: 'SELECT 1' }); // logs { profileLabel, durationMs, tags: ['profile'], ... }
+
+// Aliases
+logger.time('calc');
+// ... work ...
+logger.timeEnd('calc');
+
+// Sync block
+const value = logger.timeSync('compute', () => 2 + 2, { component: 'math' });
+
+// Async block (logs success or error, rethrows on error)
+await logger.timeAsync(
+  'load-user',
+  async () => {
+    return await getUser(42);
+  },
+  { component: 'users' }
+);
+```
+
+Every profile entry includes:
+
+- message: the label you provided
+- metadata: profileLabel, durationMs, tags: ['profile'], and any custom fields
+- requestId is attached automatically when request context is active
 
 ---
 
@@ -365,9 +400,9 @@ Notes:
 
 ## 📚 Future Work
 
-- Profiling & timing: simple profiler (logger.profile('db') ... logger.profileEnd('db')).
-- Syslog/journald: transports for system logs on Linux/Unix.
-- OpenTelemetry integration: automatic trace/span ID
+- Syslog/journald transports for system logging
+- OpenTelemetry integration (trace/span IDs propagation)
+- More adapters and richer redaction/masking presets
 
 ---
 
