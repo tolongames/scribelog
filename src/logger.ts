@@ -25,15 +25,21 @@ export type LoggerInterface = _LoggerInterface;
 
 // Klasa Scribelog implementująca dynamiczny interfejs LoggerInterface
 export class Scribelog implements LoggerInterface {
-  public levels: LogLevels; // Nadal Record<string, number>
-  public level: LogLevel; // Teraz string
+  public levels: LogLevels;
+  public level: LogLevel;
   private transports: Transport[];
+  private profilerOptions: LoggerOptions['profiler'];
   private profiles = new Map<string, bigint>();
   private format: LogFormat;
   private defaultMeta?: Record<string, any>;
-  private options: LoggerOptions; // Przechowuje ORYGINALNE opcje konfiguracyjne
+  private options: LoggerOptions;
 
   private profileStartMeta = new Map<string, Record<string, any>>();
+  // --- POCZĄTEK ZMIANY: obsługa współbieżności/kolizji ---
+  private profileSeq = 0;
+  private labelStacks = new Map<string, string[]>(); // label -> stos kluczy
+  private keyToLabel = new Map<string, string>(); // key -> label (odwrotna mapa)
+  private cleanupTimer?: NodeJS.Timeout; // interwał sprzątania osieroconych wpisów
 
   private exitOnError: boolean;
   private exceptionHandler?: (err: Error) => void;
@@ -96,6 +102,24 @@ export class Scribelog implements LoggerInterface {
     this.format = options.format || format.defaultSimpleFormat;
     this.defaultMeta = options.defaultMeta;
     this.exitOnError = options.exitOnError !== false;
+    this.profilerOptions = options.profiler || {};
+
+    const ttlMs = this.profilerOptions.ttlMs;
+    const cleanupEvery = this.profilerOptions.cleanupIntervalMs ?? 60_000; // domyślnie 60s
+    const hasCleanup = typeof ttlMs === 'number' && ttlMs > 0;
+    if (hasCleanup) {
+      this.cleanupTimer = setInterval(() => {
+        try {
+          this.cleanupProfiles();
+        } catch (e) {
+          console.warn('[scribelog] cleanupProfiles failed:', e);
+        }
+      }, cleanupEvery);
+      // Nie blokuj procesu
+      if (typeof (this.cleanupTimer as any)?.unref === 'function') {
+        (this.cleanupTimer as any).unref();
+      }
+    }
 
     // --- Dynamiczne tworzenie metod dla WSZYSTKICH poziomów ---
     Object.keys(this.levels).forEach((levelName) => {
@@ -144,6 +168,197 @@ export class Scribelog implements LoggerInterface {
       };
       process.removeAllListeners('unhandledRejection');
       process.on('unhandledRejection', this.rejectionHandler);
+    }
+  }
+
+  private emitProfileEvent(params: {
+    label: string;
+    durationMs: number;
+    success?: boolean;
+    level: LogLevel;
+    metaOut: Record<string, any>;
+    key?: string;
+  }): void {
+    const cb = this.profilerOptions?.onMeasure;
+    if (typeof cb !== 'function') return;
+    try {
+      const { label, durationMs, success, level, metaOut, key } = params;
+      const event = {
+        label,
+        durationMs,
+        success,
+        level,
+        tags: Array.isArray(metaOut.tags) ? metaOut.tags : undefined,
+        requestId:
+          (metaOut &&
+            typeof metaOut.requestId === 'string' &&
+            metaOut.requestId) ||
+          getRequestId(),
+        meta: { ...metaOut },
+        key,
+      };
+      cb(event);
+    } catch (e) {
+      // Nigdy nie przerywaj logowania przez błąd hooka
+      console.warn('[scribelog] profiler.onMeasure hook threw:', e);
+    }
+  }
+
+  private composeProfileTags(existing?: any): string[] {
+    const profiler = this.profilerOptions || {};
+    const base = ['profile'];
+    const def = Array.isArray(profiler.tagsDefault) ? profiler.tagsDefault : [];
+    const provided = Array.isArray(existing) ? existing : [];
+    const mode = profiler.tagsMode || 'append';
+
+    let ordered: string[];
+    switch (mode) {
+      case 'replace':
+        ordered = provided.length ? provided : def.length ? def : base;
+        break;
+      case 'prepend':
+        ordered = [...base, ...def, ...provided];
+        break;
+      case 'append':
+      default:
+        ordered = [...provided, ...base, ...def];
+        break;
+    }
+    // deduplikacja z zachowaniem kolejności
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const t of ordered) {
+      if (typeof t === 'string' && !seen.has(t)) {
+        seen.add(t);
+        out.push(t);
+      }
+    }
+    return out;
+  }
+
+  private applyDefaultProfileFields(metaOut: Record<string, any>): void {
+    const fields = this.profilerOptions?.fieldsDefault;
+    if (fields && typeof fields === 'object') {
+      for (const key of Object.keys(fields)) {
+        if (metaOut[key] === undefined) {
+          metaOut[key] = (fields as any)[key];
+        }
+      }
+    }
+  }
+
+  private shouldStartProfile(): boolean {
+    const p = this.profilerOptions || {};
+    // Jeśli użytkownik podał getLevel, nie możemy z góry określić poziomu -> profiluj
+    if (typeof p.getLevel === 'function') return true;
+
+    const baseLevel = (p.level || 'debug') as LogLevel;
+    if (this.isLevelEnabled(baseLevel)) return true;
+
+    // Jeżeli zdefiniowane progi, sprawdź czy wyższe poziomy są włączone
+    if (
+      p.thresholdErrorMs !== undefined &&
+      this.isLevelEnabled('error' as LogLevel)
+    ) {
+      return true;
+    }
+    if (
+      p.thresholdWarnMs !== undefined &&
+      this.isLevelEnabled('warn' as LogLevel)
+    ) {
+      return true;
+    }
+    return false;
+  }
+
+  private makeProfileKey(label: string, meta?: Record<string, any>): string {
+    const profiler = this.profilerOptions || {};
+    try {
+      if (typeof profiler?.keyFactory === 'function') {
+        const k = profiler.keyFactory(label, meta);
+        if (k && typeof k === 'string') return k;
+      }
+    } catch (e) {
+      console.warn('[scribelog] profiler.keyFactory threw:', e);
+    }
+    const rid =
+      profiler?.namespaceWithRequestId && typeof getRequestId === 'function'
+        ? getRequestId()
+        : undefined;
+    this.profileSeq = (this.profileSeq + 1) % Number.MAX_SAFE_INTEGER;
+    const prefix = rid ? `${rid}:` : '';
+    return `${prefix}${label}#${this.profileSeq}`;
+  }
+
+  private pushLabelKey(label: string, key: string): void {
+    const stack = this.labelStacks.get(label) || [];
+    stack.push(key);
+    this.labelStacks.set(label, stack);
+  }
+
+  private popLabelKey(label: string): string | undefined {
+    const stack = this.labelStacks.get(label);
+    if (!stack || stack.length === 0) return undefined;
+    const key = stack.pop()!;
+    if (stack.length === 0) this.labelStacks.delete(label);
+    else this.labelStacks.set(label, stack);
+    return key;
+  }
+
+  private removeLabelKey(label: string, key: string): void {
+    const stack = this.labelStacks.get(label);
+    if (!stack || stack.length === 0) return;
+    const idx = stack.lastIndexOf(key);
+    if (idx >= 0) {
+      stack.splice(idx, 1);
+      if (stack.length === 0) this.labelStacks.delete(label);
+      else this.labelStacks.set(label, stack);
+    }
+  }
+
+  private removeProfileByKey(key: string): void {
+    // Usuń z profiles i powiązanych struktur
+    this.profiles.delete(key);
+    this.profileStartMeta.delete(key);
+    const label = this.keyToLabel.get(key);
+    if (label) {
+      this.removeLabelKey(label, key);
+      this.keyToLabel.delete(key);
+    }
+  }
+
+  private cleanupProfiles(): void {
+    const ttlMs = this.profilerOptions?.ttlMs;
+    if (typeof ttlMs === 'number' && ttlMs > 0) {
+      const now = process.hrtime.bigint();
+      const ttlNs = BigInt(Math.floor(ttlMs * 1e6)); // ms -> ns
+      // profiles: Map<key, startNs>
+      for (const [key, startNs] of this.profiles) {
+        const ageNs = now - startNs;
+        if (ageNs > ttlNs) {
+          // Orphan cleanup
+          this.removeProfileByKey(key);
+          // Uwaga: używamy console.warn aby uniknąć rekurencji loggera
+          console.warn(
+            `[scribelog] Removed orphaned profile "${key}" after exceeding TTL ${ttlMs}ms`
+          );
+        }
+      }
+    }
+
+    const maxActive = this.profilerOptions?.maxActiveProfiles;
+    if (typeof maxActive === 'number' && maxActive > 0) {
+      while (this.profiles.size > maxActive) {
+        // Usuń najstarszy (Map zachowuje kolejność wstawiania)
+        const oldestKey = this.profiles.keys().next().value as
+          | string
+          | undefined;
+        if (!oldestKey) break;
+        this.removeProfileByKey(oldestKey);
+        console.warn(
+          `[scribelog] Removed oldest active profile "${oldestKey}" due to maxActiveProfiles=${maxActive}`
+        );
+      }
     }
   }
 
@@ -200,49 +415,124 @@ export class Scribelog implements LoggerInterface {
     this.processAndTransport(logEntry);
   }
   // ...existing code...
-  public profile(label: string, meta?: Record<string, any>): void {
-    this.profiles.set(label, process.hrtime.bigint());
-    if (meta && typeof meta === 'object') {
-      this.profileStartMeta.set(label, meta);
+  public profile(
+    label: string,
+    meta?: Record<string, any>
+  ): { key: string; label: string } {
+    // Fast‑path: jeśli profilowanie wyłączone (np. brak debug i progów), nie zakładaj Map
+    if (!this.shouldStartProfile()) {
+      return { key: '', label }; // no-op handle
     }
-    // opcjonalny log startu...
+
+    const key = this.makeProfileKey(label, meta);
+    this.profiles.set(key, process.hrtime.bigint());
+    if (meta && typeof meta === 'object') {
+      this.profileStartMeta.set(key, meta);
+    }
+    this.pushLabelKey(label, key);
+    this.keyToLabel.set(key, label);
+
+    // Egzekwuj maxActiveProfiles “na gorąco”
+    const maxActive = this.profilerOptions?.maxActiveProfiles;
+    if (typeof maxActive === 'number' && maxActive > 0) {
+      while (this.profiles.size > maxActive) {
+        const oldestKey = this.profiles.keys().next().value as
+          | string
+          | undefined;
+        if (!oldestKey || oldestKey === key) break;
+        this.removeProfileByKey(oldestKey);
+        console.warn(
+          `[scribelog] Removed oldest active profile "${oldestKey}" due to maxActiveProfiles=${maxActive}`
+        );
+      }
+    }
+    return { key, label };
   }
 
-  public profileEnd(label: string, meta?: Record<string, any>): void {
-    const start = this.profiles.get(label);
-    const end = process.hrtime.bigint();
-    const durationMs =
-      start !== undefined ? Number(end - start) / 1e6 : undefined;
-    if (start !== undefined) this.profiles.delete(label);
+  public profileEnd(
+    labelOrHandle: string | { key: string; label: string },
+    meta?: Record<string, any>
+  ): void {
+    const isHandle =
+      typeof labelOrHandle === 'object' && labelOrHandle !== null;
+    const label = isHandle
+      ? (labelOrHandle as any).label
+      : (labelOrHandle as string);
+    const key = isHandle ? (labelOrHandle as any).key : this.popLabelKey(label);
 
-    // SCAL meta: start + end (koniec nadpisuje start)
-    const startMeta = this.profileStartMeta.get(label);
-    this.profileStartMeta.delete(label);
+    if (!key) {
+      return;
+    }
+    if (isHandle) {
+      this.removeLabelKey(label, key);
+    }
+    this.keyToLabel.delete(key);
+
+    const start = this.profiles.get(key);
+    // NEW: jeśli start nie istnieje (profil usunięty przez TTL/limit), nie loguj
+    if (start === undefined) {
+      this.profileStartMeta.delete(key);
+      return;
+    }
+
+    const end = process.hrtime.bigint();
+    const durationMs = Number(end - start) / 1e6;
+    this.profiles.delete(key);
+
+    const startMeta = this.profileStartMeta.get(key);
+    if (startMeta) this.profileStartMeta.delete(key);
 
     const metaOut: Record<string, any> = {
       ...(startMeta || {}),
       ...(meta || {}),
       profileLabel: label,
-      ...(durationMs !== undefined
-        ? { durationMs: Math.round(durationMs) }
-        : {}),
+      durationMs: Math.round(durationMs),
     };
 
-    // tag 'profile'
-    if (Array.isArray(metaOut.tags)) {
-      metaOut.tags = [...metaOut.tags, 'profile'];
-    } else {
-      metaOut.tags = ['profile'];
+    metaOut.tags = this.composeProfileTags(metaOut.tags);
+    this.applyDefaultProfileFields(metaOut);
+
+    // Ustal poziom wg opcji/heurystyki
+    const profiler = this.profilerOptions || {};
+    let level: LogLevel =
+      (metaOut.level as LogLevel) || profiler.level || 'debug';
+    if (typeof profiler.getLevel === 'function') {
+      level = profiler.getLevel(durationMs, metaOut);
+    } else if (
+      profiler.thresholdErrorMs !== undefined &&
+      durationMs >= profiler.thresholdErrorMs
+    ) {
+      level = 'error';
+    } else if (
+      profiler.thresholdWarnMs !== undefined &&
+      durationMs >= profiler.thresholdWarnMs
+    ) {
+      level = 'warn';
     }
-    this.log('debug', label, metaOut);
+
+    if ('level' in metaOut) delete (metaOut as any).level;
+
+    this.emitProfileEvent({
+      label,
+      durationMs: Math.round(durationMs),
+      level,
+      metaOut,
+      key,
+    });
+
+    // Poprawka: użyj wyliczonego poziomu
+    this.log(level, label, metaOut);
   }
 
   // Alias: time/timeEnd
   public time(label: string, meta?: Record<string, any>): void {
     this.profile(label, meta);
   }
-  public timeEnd(label: string, meta?: Record<string, any>): void {
-    this.profileEnd(label, meta);
+  public timeEnd(
+    labelOrHandle: string | { key: string; label: string },
+    meta?: Record<string, any>
+  ): void {
+    this.profileEnd(labelOrHandle as any, meta);
   }
 
   // Wygodne pomiary bloków sync/async
@@ -251,6 +541,10 @@ export class Scribelog implements LoggerInterface {
     fn: () => T,
     meta?: Record<string, any>
   ): T {
+    // Fast‑path: wyłączone profilowanie -> bez logowania
+    if (!this.shouldStartProfile()) {
+      return fn();
+    }
     const start = process.hrtime.bigint();
     try {
       return fn();
@@ -261,11 +555,39 @@ export class Scribelog implements LoggerInterface {
         profileLabel: label,
         durationMs: Math.round(durationMs),
         success: true,
-        tags: Array.isArray(meta?.tags)
-          ? [...meta!.tags, 'profile']
-          : ['profile'],
+        tags: Array.isArray(meta?.tags) ? [...meta!.tags] : undefined,
       };
-      this.log('debug', label, metaOut);
+
+      metaOut.tags = this.composeProfileTags(metaOut.tags);
+      this.applyDefaultProfileFields(metaOut);
+
+      const profiler = this.profilerOptions || {};
+      let level: LogLevel =
+        (metaOut.level as LogLevel) || profiler.level || 'debug';
+      if (typeof profiler.getLevel === 'function') {
+        level = profiler.getLevel(durationMs, metaOut);
+      } else if (
+        profiler.thresholdErrorMs !== undefined &&
+        durationMs >= profiler.thresholdErrorMs
+      ) {
+        level = 'error';
+      } else if (
+        profiler.thresholdWarnMs !== undefined &&
+        durationMs >= profiler.thresholdWarnMs
+      ) {
+        level = 'warn';
+      }
+      if ('level' in metaOut) delete (metaOut as any).level;
+
+      this.emitProfileEvent({
+        label,
+        durationMs: Math.round(durationMs),
+        success: true,
+        level,
+        metaOut,
+      });
+
+      this.log(level, label, metaOut);
     }
   }
 
@@ -274,6 +596,10 @@ export class Scribelog implements LoggerInterface {
     fn: () => Promise<T>,
     meta?: Record<string, any>
   ): Promise<T> {
+    // Fast‑path: wyłączone profilowanie -> bez logowania
+    if (!this.shouldStartProfile()) {
+      return fn();
+    }
     const start = process.hrtime.bigint();
     try {
       const result = await fn();
@@ -283,11 +609,39 @@ export class Scribelog implements LoggerInterface {
         profileLabel: label,
         durationMs: Math.round(durationMs),
         success: true,
-        tags: Array.isArray(meta?.tags)
-          ? [...meta!.tags, 'profile']
-          : ['profile'],
+        tags: Array.isArray(meta?.tags) ? [...meta!.tags] : undefined,
       };
-      this.log('debug', label, metaOut);
+
+      metaOut.tags = this.composeProfileTags(metaOut.tags);
+      this.applyDefaultProfileFields(metaOut);
+
+      const profiler = this.profilerOptions || {};
+      let level: LogLevel =
+        (metaOut.level as LogLevel) || profiler.level || 'debug';
+      if (typeof profiler.getLevel === 'function') {
+        level = profiler.getLevel(durationMs, metaOut);
+      } else if (
+        profiler.thresholdErrorMs !== undefined &&
+        durationMs >= profiler.thresholdErrorMs
+      ) {
+        level = 'error';
+      } else if (
+        profiler.thresholdWarnMs !== undefined &&
+        durationMs >= profiler.thresholdWarnMs
+      ) {
+        level = 'warn';
+      }
+      if ('level' in metaOut) delete (metaOut as any).level;
+
+      this.emitProfileEvent({
+        label,
+        durationMs: Math.round(durationMs),
+        success: true,
+        level,
+        metaOut,
+      });
+
+      this.log(level, label, metaOut);
       return result;
     } catch (error) {
       const durationMs = Number(process.hrtime.bigint() - start) / 1e6;
@@ -297,12 +651,39 @@ export class Scribelog implements LoggerInterface {
         durationMs: Math.round(durationMs),
         success: false,
         error,
-        tags: Array.isArray(meta?.tags)
-          ? [...meta!.tags, 'profile']
-          : ['profile'],
+        tags: Array.isArray(meta?.tags) ? [...meta!.tags] : undefined,
       };
-      // Błąd też logujemy na 'debug' z polem error (format.error() go obsłuży)
-      this.log('debug', label, metaOut);
+      metaOut.tags = this.composeProfileTags(metaOut.tags);
+      this.applyDefaultProfileFields(metaOut);
+
+      const profiler = this.profilerOptions || {};
+      let level: LogLevel =
+        (metaOut.level as LogLevel) || profiler.level || 'debug';
+      if (typeof profiler.getLevel === 'function') {
+        level = profiler.getLevel(durationMs, metaOut);
+      } else if (
+        profiler.thresholdErrorMs !== undefined &&
+        durationMs >= profiler.thresholdErrorMs
+      ) {
+        level = 'error';
+      } else if (
+        profiler.thresholdWarnMs !== undefined &&
+        durationMs >= profiler.thresholdWarnMs
+      ) {
+        level = 'warn';
+      }
+      if ('level' in metaOut) delete (metaOut as any).level;
+
+      // FIX: emit success=false w evencie
+      this.emitProfileEvent({
+        label,
+        durationMs: Math.round(durationMs),
+        success: false,
+        level,
+        metaOut,
+      });
+
+      this.log(level, label, metaOut);
       throw error;
     }
   }
@@ -407,6 +788,17 @@ export class Scribelog implements LoggerInterface {
     if (this.rejectionHandler) {
       process.removeListener('unhandledRejection', this.rejectionHandler);
       this.rejectionHandler = undefined;
+    }
+    if (this.cleanupTimer) {
+      clearInterval(this.cleanupTimer);
+      this.cleanupTimer = undefined;
+    }
+  }
+
+  public dispose(): void {
+    if (this.cleanupTimer) {
+      clearInterval(this.cleanupTimer);
+      this.cleanupTimer = undefined;
     }
   }
 

@@ -11,6 +11,7 @@ import {
 } from '../src/index';
 import { Scribelog } from '../src/logger';
 import type { Transport, LogFormat, LogLevel } from '../src/types';
+import { runWithRequestContext, setRequestId } from '../src/requestContext';
 // Usuwamy nieużywany import formatDate, jeśli nie jest potrzebny w innych częściach pliku
 // import { format as formatDate } from 'date-fns';
 import chalk from 'chalk';
@@ -1023,8 +1024,6 @@ class TestTransport implements Transport {
   }
 }
 
-const identityFormat: LogFormat = (info: any) => info;
-
 function buildTestLogger(level: LogLevel = 'debug') {
   const transport = new TestTransport({ level: 'debug' });
   const logger = new Scribelog({
@@ -1129,5 +1128,736 @@ describe('profiling & timing API', () => {
     expect(typeof entry.durationMs).toBe('number');
     expect(entry.error).toBeTruthy();
     expect(String(entry.error.message)).toContain('fail');
+  });
+});
+
+class CaptureTransport implements Transport {
+  level?: LogLevel;
+  format?: LogFormat;
+  outputs: any[] = [];
+  constructor(opts?: { level?: LogLevel; format?: LogFormat }) {
+    this.level = opts?.level;
+    this.format = opts?.format;
+  }
+  log(output: any): void {
+    this.outputs.push(output);
+  }
+}
+const identityFormat: LogFormat = (info: any) => info;
+
+function buildLoggerWithCapture(opts?: any) {
+  const cap = new CaptureTransport({ level: 'silly', format: identityFormat });
+  const logger = createLogger({
+    level: 'silly',
+    format: identityFormat,
+    transports: [cap],
+    ...(opts || {}),
+  }) as Scribelog;
+  return { logger, cap };
+}
+
+describe('profiler: configurable levels and thresholds', () => {
+  test('timeSync escalates to warn when thresholdWarnMs is reached', () => {
+    const { logger, cap } = buildLoggerWithCapture({
+      profiler: { thresholdWarnMs: 0 }, // każda >0 ms => warn
+    });
+
+    const result = logger.timeSync('calc-warn', () => 2 + 2);
+    expect(result).toBe(4);
+
+    const entry = cap.outputs.at(-1);
+    expect(entry.message).toBe('calc-warn');
+    expect(entry.profileLabel).toBe('calc-warn');
+    expect(typeof entry.durationMs).toBe('number');
+    expect(entry.tags).toContain('profile');
+    expect(entry.level).toBe('warn');
+  });
+
+  test('timeAsync escalates to error when thresholdErrorMs is reached', async () => {
+    const { logger, cap } = buildLoggerWithCapture({
+      profiler: { thresholdErrorMs: 0 },
+    });
+
+    await logger.timeAsync('io-error', async () => {
+      await sleep(2);
+      return 123;
+    });
+
+    const entry = cap.outputs.at(-1);
+    expect(entry.message).toBe('io-error');
+    expect(entry.level).toBe('error');
+    expect(entry.success).toBe(true);
+    expect(entry.tags).toContain('profile');
+  });
+
+  test('getLevel overrides thresholds and meta', async () => {
+    const { logger, cap } = buildLoggerWithCapture({
+      profiler: {
+        thresholdWarnMs: 0,
+        thresholdErrorMs: 0,
+        getLevel: () => 'info', // powinno nadpisać progi
+      },
+    });
+
+    await logger.timeAsync(
+      'io-getlevel',
+      async () => {
+        await sleep(1);
+      },
+      { level: 'error' }
+    ); // meta.level nie powinno wygrać z getLevel
+
+    const entry = cap.outputs.at(-1);
+    expect(entry.message).toBe('io-getlevel');
+    expect(entry.level).toBe('info');
+  });
+});
+
+describe('profiler: handles and label concurrency', () => {
+  test('profile returns a handle; profileEnd(handle) ends the exact timer and merges meta', async () => {
+    const { logger, cap } = buildLoggerWithCapture({
+      profiler: { level: 'debug' },
+    });
+
+    const h1 = logger.profile('db', { start: 1 });
+    await sleep(2);
+    const h2 = logger.profile('db', { start: 2 });
+    await sleep(2);
+
+    logger.profileEnd(h1, { end: 'first' });
+    logger.profileEnd(h2, { end: 'second' });
+
+    // Sprawdź dwa wpisy z poprawnie scalonym meta
+    const lastTwo = cap.outputs.slice(-2);
+    expect(lastTwo[0].message).toBe('db');
+    expect(lastTwo[0].profileLabel).toBe('db');
+    expect(lastTwo[0].start).toBe(1);
+    expect(lastTwo[0].end).toBe('first');
+    expect(lastTwo[0].tags).toContain('profile');
+
+    expect(lastTwo[1].message).toBe('db');
+    expect(lastTwo[1].profileLabel).toBe('db');
+    expect(lastTwo[1].start).toBe(2);
+    expect(lastTwo[1].end).toBe('second');
+    expect(lastTwo[1].tags).toContain('profile');
+  });
+
+  test('profileEnd(label) uses LIFO per-label stack when multiple timers run with same label', async () => {
+    const { logger, cap } = buildLoggerWithCapture({
+      profiler: { level: 'debug' },
+    });
+
+    logger.profile('db', { id: 'A' });
+    await sleep(1);
+    logger.profile('db', { id: 'B' });
+    await sleep(1);
+
+    // Zakończy najnowszy ('B'), potem starszy ('A')
+    logger.profileEnd('db', { end: 'first-end' });
+    logger.profileEnd('db', { end: 'second-end' });
+
+    const lastTwo = cap.outputs.slice(-2);
+    expect(lastTwo[0].id).toBe('B'); // pierwszy zakończony to B
+    expect(lastTwo[0].end).toBe('first-end');
+    expect(lastTwo[1].id).toBe('A'); // potem A
+    expect(lastTwo[1].end).toBe('second-end');
+  });
+
+  test('namespaceWithRequestId prefixes internal profile key with requestId', () => {
+    const { logger } = buildLoggerWithCapture({
+      profiler: { namespaceWithRequestId: true },
+    });
+
+    let handle: { key: string; label: string } | undefined;
+    if (
+      typeof runWithRequestContext === 'function' &&
+      typeof setRequestId === 'function'
+    ) {
+      runWithRequestContext({ requestId: 'req-xyz' }, () => {
+        setRequestId('req-xyz');
+        handle = logger.profile('work');
+      });
+    } else {
+      // Jeśli brak API kontekstu, pomiń test (zachowaj zgodność)
+      return;
+    }
+
+    expect(handle).toBeTruthy();
+    expect(handle!.label).toBe('work');
+    expect(handle!.key.startsWith('req-xyz:')).toBe(true);
+
+    // Sprzątnij, by nie zostawiać otwartego timera
+    logger.profileEnd(handle!);
+  });
+});
+
+class OrphanCaptureTransport implements Transport {
+  level?: LogLevel;
+  format?: LogFormat;
+  outputs: any[] = [];
+  constructor(opts?: { level?: LogLevel; format?: LogFormat }) {
+    this.level = opts?.level;
+    this.format = opts?.format;
+  }
+  log(output: any): void {
+    this.outputs.push(output);
+  }
+}
+const passThroughFormatForOrphan: LogFormat = (info: any) => info;
+const sleepMsOrphan = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// ...existing code...
+describe('profiler: orphan cleanup (TTL) and dispose()', () => {
+  test('removes orphaned timers after ttl via cleanup interval', async () => {
+    const cap = new OrphanCaptureTransport({
+      level: 'silly',
+      format: passThroughFormatForOrphan,
+    });
+    const logger = createLogger({
+      level: 'silly',
+      format: passThroughFormatForOrphan,
+      transports: [cap],
+      profiler: {
+        ttlMs: 30,
+        cleanupIntervalMs: 10,
+      },
+    }) as any;
+
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      logger.profile('ttl-orphan', { id: 'X' });
+      await sleepMsOrphan(120);
+
+      const before = cap.outputs.length;
+      logger.profileEnd('ttl-orphan', { should: 'not-log' });
+      const after = cap.outputs.length;
+
+      expect(after).toBe(before);
+      expect(warnSpy).toHaveBeenCalled();
+    } finally {
+      logger.dispose?.(); // stop cleanup timer
+      warnSpy.mockRestore();
+    }
+  });
+
+  test('maxActiveProfiles removes oldest; only newest can be ended later', async () => {
+    const cap = new OrphanCaptureTransport({
+      level: 'silly',
+      format: passThroughFormatForOrphan,
+    });
+    const logger = createLogger({
+      level: 'silly',
+      format: passThroughFormatForOrphan,
+      transports: [cap],
+      profiler: {
+        maxActiveProfiles: 1,
+      },
+    }) as any;
+
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const h1 = logger.profile('db', { idx: 1 });
+      await sleepMsOrphan(5);
+      const h2 = logger.profile('db', { idx: 2 });
+      await sleepMsOrphan(5);
+
+      const before = cap.outputs.length;
+      logger.profileEnd(h1, { end: 'first' });
+      expect(cap.outputs.length).toBe(before);
+
+      logger.profileEnd(h2, { end: 'second' });
+      const last = cap.outputs.at(-1);
+      expect(last.message).toBe('db');
+      expect(last.profileLabel).toBe('db');
+      expect(last.idx).toBe(2);
+      expect(last.end).toBe('second');
+      expect(Array.isArray(last.tags) && last.tags).toContain('profile');
+
+      expect(warnSpy).toHaveBeenCalled();
+    } finally {
+      logger.dispose?.();
+      warnSpy.mockRestore();
+    }
+  });
+
+  test('dispose() stops background cleanup; timer survives past ttl until ended', async () => {
+    const cap = new OrphanCaptureTransport({
+      level: 'silly',
+      format: passThroughFormatForOrphan,
+    });
+    const logger = createLogger({
+      level: 'silly',
+      format: passThroughFormatForOrphan,
+      transports: [cap],
+      profiler: {
+        ttlMs: 20,
+        cleanupIntervalMs: 10,
+      },
+    }) as any;
+
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      logger.dispose?.(); // stop cleanup before starting timer
+
+      const h = logger.profile('no-cleanup', { key: 'stay' });
+      await sleepMsOrphan(60); // > ttl, but cleanup is disabled
+      logger.profileEnd(h, { done: true });
+
+      const last = cap.outputs.at(-1);
+      expect(last.message).toBe('no-cleanup');
+      expect(last.profileLabel).toBe('no-cleanup');
+      expect(last.key).toBe('stay');
+      expect(last.done).toBe(true);
+
+      expect(warnSpy).not.toHaveBeenCalled();
+    } finally {
+      // nothing to dispose (already disposed), just restore spy
+      warnSpy.mockRestore();
+    }
+  });
+});
+// ...existing code...
+
+// ...existing code...
+
+// Fast‑path helpers (unikalne nazwy aby nie dublować)
+class FastPathCaptureTransport {
+  level?: any;
+  format?: any;
+  outputs: any[] = [];
+  constructor(opts?: { level?: any; format?: any }) {
+    this.level = opts?.level;
+    this.format = opts?.format;
+  }
+  log(output: any): void {
+    this.outputs.push(output);
+  }
+}
+const passthroughFmtFastpath = (info: any) => info;
+const waitFast = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+describe('profiler fast-path (no debug, no thresholds => no overhead/logs)', () => {
+  test('timeSync/timeAsync/profile are no-ops when base level hides debug and no thresholds/getLevel', async () => {
+    const cap = new FastPathCaptureTransport({
+      level: 'silly',
+      format: passthroughFmtFastpath,
+    });
+    const logger: any = require('../src/logger').createLogger({
+      level: 'info', // debug nieaktywne
+      format: passthroughFmtFastpath,
+      transports: [cap],
+      profiler: {
+        // brak thresholds i getLevel => shouldStartProfile() === false
+      },
+    });
+
+    const before = cap.outputs.length;
+
+    // timeSync — powinno wykonać funkcję i nie logować
+    const v = logger.timeSync('fp-sync', () => 123);
+    expect(v).toBe(123);
+
+    // timeAsync — powinno wykonać i nie logować
+    const r = await logger.timeAsync('fp-async', async () => {
+      await waitFast(2);
+      return 7;
+    });
+    expect(r).toBe(7);
+
+    // profile/time — powinno zwrócić no-op handle i nie logować
+    const h = logger.profile('fp-profile');
+    expect(h && typeof h.key === 'string').toBe(true);
+    expect(h.key).toBe(''); // no-op handle
+    await waitFast(2);
+    logger.profileEnd(h);
+
+    // Po wszystkich operacjach brak nowych wpisów
+    const after = cap.outputs.length;
+    expect(after).toBe(before);
+  });
+});
+
+describe('profiler fast-path respects thresholds/getLevel/profiler.level even if debug is off', () => {
+  test('thresholdWarnMs escalates to warn even when logger level is info', () => {
+    const cap = new FastPathCaptureTransport({
+      level: 'silly',
+      format: passthroughFmtFastpath,
+    });
+    const logger: any = require('../src/logger').createLogger({
+      level: 'info', // debug wyłączony
+      format: passthroughFmtFastpath,
+      transports: [cap],
+      profiler: {
+        thresholdWarnMs: 0, // zawsze >= 0 => warn
+      },
+    });
+
+    logger.timeSync('fp-warn', () => 1 + 1);
+
+    const entry = cap.outputs.at(-1);
+    expect(entry.message).toBe('fp-warn');
+    expect(entry.level).toBe('warn');
+    expect(entry.tags).toContain('profile');
+    expect(typeof entry.durationMs).toBe('number');
+  });
+
+  test('getLevel forces logging (e.g., info) even when debug off', async () => {
+    const cap = new FastPathCaptureTransport({
+      level: 'silly',
+      format: passthroughFmtFastpath,
+    });
+    const logger: any = require('../src/logger').createLogger({
+      level: 'info',
+      format: passthroughFmtFastpath,
+      transports: [cap],
+      profiler: {
+        getLevel: () => 'info',
+      },
+    });
+
+    await logger.timeAsync('fp-getlevel', async () => {
+      await waitFast(1);
+      return 'ok';
+    });
+
+    const entry = cap.outputs.at(-1);
+    expect(entry.message).toBe('fp-getlevel');
+    expect(entry.level).toBe('info');
+    expect(entry.tags).toContain('profile');
+  });
+
+  test('profiler.level=info logs at info without thresholds/getLevel', () => {
+    const cap = new FastPathCaptureTransport({
+      level: 'silly',
+      format: passthroughFmtFastpath,
+    });
+    const logger: any = require('../src/logger').createLogger({
+      level: 'info',
+      format: passthroughFmtFastpath,
+      transports: [cap],
+      profiler: {
+        level: 'info', // bazowy poziom profilera aktywny przy logger.level=info
+      },
+    });
+
+    logger.timeSync('fp-profiler-base', () => 0);
+
+    const entry = cap.outputs.at(-1);
+    expect(entry.message).toBe('fp-profiler-base');
+    expect(entry.level).toBe('info');
+    expect(entry.tags).toContain('profile');
+  });
+});
+
+class TagsFieldsCaptureTransport implements Transport {
+  level?: LogLevel;
+  format?: LogFormat;
+  outputs: any[] = [];
+  constructor(opts?: { level?: LogLevel; format?: LogFormat }) {
+    this.level = opts?.level;
+    this.format = opts?.format;
+  }
+  log(output: any): void {
+    this.outputs.push(output);
+  }
+}
+const fmtTagsFields: LogFormat = (info: any) => info;
+
+describe('profiler: configurable tags and fields', () => {
+  test('append (default) deduplicates and adds defaults after base', () => {
+    const cap = new TagsFieldsCaptureTransport({
+      level: 'silly',
+      format: fmtTagsFields,
+    });
+    const logger: any = createLogger({
+      level: 'debug',
+      format: fmtTagsFields,
+      transports: [cap],
+      profiler: {
+        // default mode: 'append'
+        tagsDefault: ['perf', 'db'],
+      },
+    });
+
+    logger.timeSync('tags-append', () => 1, { tags: ['custom', 'db'] });
+
+    const entry = cap.outputs.at(-1);
+    expect(entry.message).toBe('tags-append');
+    // expected order: provided ['custom','db'] + base ['profile'] + defaults ['perf','db'] -> dedup
+    expect(entry.tags).toEqual(['custom', 'db', 'profile', 'perf']);
+    expect(entry.tags.filter((t: string) => t === 'db')).toHaveLength(1);
+    logger.dispose?.();
+  });
+
+  test('prepend mode puts base+defaults before provided', () => {
+    const cap = new TagsFieldsCaptureTransport({
+      level: 'silly',
+      format: fmtTagsFields,
+    });
+    const logger: any = createLogger({
+      level: 'debug',
+      format: fmtTagsFields,
+      transports: [cap],
+      profiler: {
+        tagsDefault: ['def1'],
+        tagsMode: 'prepend',
+      },
+    });
+
+    logger.timeSync('tags-prepend', () => 0, { tags: ['p1'] });
+
+    const entry = cap.outputs.at(-1);
+    expect(entry.message).toBe('tags-prepend');
+    expect(entry.tags).toEqual(['profile', 'def1', 'p1']);
+    logger.dispose?.();
+  });
+
+  test('replace mode uses provided tags exactly (no base/defaults added)', () => {
+    const cap = new TagsFieldsCaptureTransport({
+      level: 'silly',
+      format: fmtTagsFields,
+    });
+    const logger: any = createLogger({
+      level: 'debug',
+      format: fmtTagsFields,
+      transports: [cap],
+      profiler: {
+        tagsDefault: ['should-not-appear'],
+        tagsMode: 'replace',
+      },
+    });
+
+    logger.timeSync('tags-replace', () => 0, { tags: ['only-this'] });
+
+    const entry = cap.outputs.at(-1);
+    expect(entry.message).toBe('tags-replace');
+    expect(entry.tags).toEqual(['only-this']); // 'profile' nie jest dodawany w trybie replace przy podanych tagach
+    logger.dispose?.();
+  });
+
+  test('fieldsDefault merge: fills missing fields but does not override provided meta', async () => {
+    const cap = new TagsFieldsCaptureTransport({
+      level: 'silly',
+      format: fmtTagsFields,
+    });
+    const logger: any = createLogger({
+      level: 'debug',
+      format: fmtTagsFields,
+      transports: [cap],
+      profiler: {
+        fieldsDefault: { env: 'prod', region: 'eu' },
+        tagsDefault: ['perf'],
+      },
+    });
+
+    await logger.timeAsync('fields-defaults', async () => 42, {
+      env: 'dev',
+      x: 1,
+    });
+
+    const entry = cap.outputs.at(-1);
+    expect(entry.message).toBe('fields-defaults');
+    expect(entry.env).toBe('dev'); // nie nadpisuje
+    expect(entry.region).toBe('eu'); // uzupełnia brakujące
+    expect(entry.x).toBe(1);
+    expect(entry.tags).toContain('profile');
+    expect(entry.tags).toContain('perf');
+    logger.dispose?.();
+  });
+
+  test('profile/profileEnd merge meta with tag composition applied at end', async () => {
+    const cap = new TagsFieldsCaptureTransport({
+      level: 'silly',
+      format: fmtTagsFields,
+    });
+    const logger: any = createLogger({
+      level: 'debug',
+      format: fmtTagsFields,
+      transports: [cap],
+      profiler: {
+        tagsDefault: ['end-default'],
+        tagsMode: 'prepend',
+      },
+    });
+
+    const h = logger.profile('merge-meta', { tags: ['start'], a: 1 });
+    logger.profileEnd(h, { tags: ['end'], a: 3 });
+
+    const entry = cap.outputs.at(-1);
+    expect(entry.message).toBe('merge-meta');
+    // meta z końca nadpisuje start (a -> 3), tagi bierzemy z końca (['end']), a compose dodaje base+defaults z przodu
+    expect(entry.a).toBe(3);
+    expect(entry.tags).toEqual(['profile', 'end-default', 'end']);
+    logger.dispose?.();
+  });
+});
+// ...existing code...
+
+class HookCapTransport implements Transport {
+  level?: LogLevel;
+  format?: LogFormat;
+  outputs: any[] = [];
+  constructor(opts?: { level?: LogLevel; format?: LogFormat }) {
+    this.level = opts?.level;
+    this.format = opts?.format;
+  }
+  log(output: any): void {
+    this.outputs.push(output);
+  }
+}
+const hookFmt: LogFormat = (info: any) => info;
+
+describe('profiler: onMeasure hook', () => {
+  test('timeSync: hook receives duration, level, tags, success=true', () => {
+    const cap = new HookCapTransport({ level: 'silly', format: hookFmt });
+    const events: any[] = [];
+    const logger: any = createLogger({
+      level: 'info',
+      format: hookFmt,
+      transports: [cap],
+      profiler: {
+        level: 'info',
+        onMeasure: (e) => events.push(e),
+      },
+    });
+
+    const val = logger.timeSync('hook-sync', () => 123, { tags: ['custom'] });
+    expect(val).toBe(123);
+
+    expect(events.length).toBe(1);
+    const ev = events[0];
+    expect(ev.label).toBe('hook-sync');
+    expect(typeof ev.durationMs).toBe('number');
+    expect(ev.success).toBe(true);
+    expect(ev.level).toBe('info');
+    expect(Array.isArray(ev.tags)).toBe(true);
+    expect(ev.tags).toContain('profile');
+    // meta w evencie ma scalone pola
+    expect(ev.meta.profileLabel).toBe('hook-sync');
+    // log też powinien się pojawić
+    const entry = cap.outputs.at(-1);
+    expect(entry.message).toBe('hook-sync');
+    logger.dispose?.();
+  });
+
+  test('timeAsync (error): hook success=false, level from getLevel, meta.error obecne', async () => {
+    const cap = new HookCapTransport({ level: 'silly', format: hookFmt });
+    const events: any[] = [];
+    const logger: any = createLogger({
+      level: 'info',
+      format: hookFmt,
+      transports: [cap],
+      profiler: {
+        getLevel: () => 'warn',
+        onMeasure: (e) => events.push(e),
+      },
+    });
+
+    await expect(
+      logger.timeAsync('hook-async-error', async () => {
+        throw new Error('boom');
+      })
+    ).rejects.toThrow('boom');
+
+    expect(events.length).toBe(1);
+    const ev = events[0];
+    expect(ev.label).toBe('hook-async-error');
+    expect(ev.success).toBe(false);
+    expect(ev.level).toBe('warn');
+    expect(ev.meta && ev.meta.error).toBeTruthy();
+    expect(ev.tags).toContain('profile');
+
+    const entry = cap.outputs.at(-1);
+    expect(entry.message).toBe('hook-async-error');
+    expect(entry.success).toBe(false);
+    logger.dispose?.();
+  });
+
+  test('profile/profileEnd: hook success=undefined, key present, tags/fields composed', () => {
+    const cap = new HookCapTransport({ level: 'silly', format: hookFmt });
+    const events: any[] = [];
+    const logger: any = createLogger({
+      level: 'debug',
+      format: hookFmt,
+      transports: [cap],
+      profiler: {
+        tagsDefault: ['def-tag'],
+        tagsMode: 'prepend',
+        fieldsDefault: { svc: 'api' },
+        onMeasure: (e) => events.push(e),
+      },
+    });
+
+    const h = logger.profile('hook-profile', { tags: ['start'], a: 1 });
+    logger.profileEnd(h, { tags: ['end'], a: 2 });
+
+    expect(events.length).toBe(1);
+    const ev = events[0];
+    expect(ev.label).toBe('hook-profile');
+    expect(ev.success).toBeUndefined();
+    expect(typeof ev.durationMs).toBe('number');
+    expect(ev.key).toBe(h.key);
+    // pola domyślne dołożone, a z końca nadpisują start
+    expect(ev.meta.svc).toBe('api');
+    expect(ev.meta.a).toBe(2);
+    // prepend: ['profile','def-tag', ...providedAtEnd]
+    expect(ev.tags).toEqual(['profile', 'def-tag', 'end']);
+    logger.dispose?.();
+  });
+
+  test('hook exceptions do not break logging and are reported via console.warn', () => {
+    const cap = new HookCapTransport({ level: 'silly', format: hookFmt });
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const logger: any = createLogger({
+      level: 'info',
+      format: hookFmt,
+      transports: [cap],
+      profiler: {
+        level: 'info',
+        onMeasure: () => {
+          throw new Error('hook-fail');
+        },
+      },
+    });
+
+    logger.timeSync('hook-exc', () => 0);
+
+    // log przeszedł
+    const entry = cap.outputs.at(-1);
+    expect(entry.message).toBe('hook-exc');
+    // ostrzeżenie z hooka
+    expect(warnSpy).toHaveBeenCalled();
+    warnSpy.mockRestore();
+    logger.dispose?.();
+  });
+
+  test('event.requestId propagates from context (if context API available)', () => {
+    // Jeśli projekt nie ma API kontekstu, pomiń
+    if (
+      typeof runWithRequestContext !== 'function' ||
+      typeof setRequestId !== 'function'
+    ) {
+      return;
+    }
+    const cap = new HookCapTransport({ level: 'silly', format: hookFmt });
+    const events: any[] = [];
+    const logger: any = createLogger({
+      level: 'info',
+      format: hookFmt,
+      transports: [cap],
+      profiler: {
+        level: 'info',
+        onMeasure: (e) => events.push(e),
+      },
+    });
+
+    runWithRequestContext({ requestId: 'req-hook' }, () => {
+      setRequestId('req-hook');
+      logger.timeSync('hook-reqid', () => 1);
+    });
+
+    const ev = events.at(-1);
+    expect(ev.requestId).toBe('req-hook');
+    logger.dispose?.();
   });
 });

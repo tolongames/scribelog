@@ -996,41 +996,76 @@ Notes:
 
 ## 12. Profiling & Timing
 
-Scribelog provides a lightweight, high‑resolution timing API. You can start/stop timers manually, or wrap synchronous and asynchronous blocks. Metadata passed at the start is merged with metadata at the end.
+Scribelog provides high‑resolution timers for measuring synchronous and asynchronous work, now with richer controls.
 
-### API Surface
+Configuration (options.profiler):
+- level?: LogLevel — default logging level for profiling entries.
+- thresholdWarnMs?: number — promote to 'warn' when duration >= threshold.
+- thresholdErrorMs?: number — promote to 'error' when duration >= threshold.
+- getLevel?: (durationMs: number, meta?: Record<string, any>) => LogLevel — custom level heuristic.
+- namespaceWithRequestId?: boolean — prefix internal profile key with requestId when available.
+- keyFactory?: (label: string, meta?: Record<string, any>) => string — customize internal key.
+- ttlMs?: number — remove orphaned timers older than this TTL (ms).
+- cleanupIntervalMs?: number — how often to sweep for orphaned timers (ms).
+- maxActiveProfiles?: number — cap the number of active timers; remove oldest if exceeded.
+- tagsDefault?: string[] — default tags to compose for profiling entries.
+- tagsMode?: 'append' | 'prepend' | 'replace' — how to compose tags with 'profile' and provided tags.
+- fieldsDefault?: Record<string, any> — default fields for profiling entries (do not override explicit meta).
+- onMeasure?: (event: ProfileEvent) => void — metrics hook called after each measurement (no extra logging).
 
-- logger.profile(label, meta?)
-- logger.profileEnd(label, meta?)
-- logger.time(label, meta?) // alias of profile
-- logger.timeEnd(label, meta?) // alias of profileEnd
-- logger.timeSync(label, fn, meta?)
-- logger.timeAsync(label, fn, meta?)
+API:
+- profile(label: string, meta?): ProfileHandle — starts a timer and returns a unique handle.
+- profileEnd(labelOrHandle: string | ProfileHandle, meta?): void — ends a timer; accepts the handle or uses LIFO per label.
+- time(label: string, meta?): void — alias for profile(label, meta).
+- timeEnd(labelOrHandle: string | ProfileHandle, meta?): void — alias for profileEnd.
+- timeSync<T>(label: string, fn: () => T, meta?): T — measures a sync function, logs success.
+- timeAsync<T>(label: string, fn: () => Promise<T>, meta?): Promise<T> — measures an async function, logs success or error; rethrows errors.
 
-### Examples
+Behavior:
+- Level selection:
+  - Uses meta.level (when provided), profiler.level, or 'debug' as base.
+  - If getLevel is provided, it overrides thresholds/base.
+  - Otherwise thresholds promote to warn/error based on duration.
+  - The final meta.level field is removed so it cannot override computed level on the entry.
+- Tags/fields:
+  - Tags are composed via tagsMode + tagsDefault + 'profile' with deduplication.
+  - fieldsDefault are merged without overriding explicit meta.
+- Concurrency:
+  - Each profile() returns a handle { key, label }. profileEnd(handle) ends that exact timer; label-only ends the most recent ('LIFO') for that label.
+  - Optional namespacing adds requestId to keys; custom keyFactory gives full control.
+- Orphan cleanup:
+  - Active timers are stored in a Map; TTL sweeper removes stale timers; maxActiveProfiles removes the oldest when the cap is reached.
+  - profileEnd on a removed timer is a no-op (no log).
+  - Stop the background sweeper with logger.dispose().
+- Fast path:
+  - When profiling would not produce any logs (no debug and no thresholds/getLevel/profiler.level), time*/profile skip overhead and do not log.
+- Metrics:
+  - onMeasure(event) is called after each measurement:
+    - event: { label, durationMs, success?: boolean, level, tags?, requestId?, meta, key? }
+    - success: true/false for time*, undefined for profile/profileEnd.
+    - The hook is try/catch wrapped and does not interrupt logging.
 
+Examples:
 ```ts
-// Start/stop
-logger.profile('db');
-await db.query('SELECT 1');
-logger.profileEnd('db', { query: 'SELECT 1' });
-
-// Sync block
-const result = logger.timeSync('calc', () => 2 + 2, { component: 'math' });
-
-// Async block (success/error)
-await logger.timeAsync(
-  'fetch-user',
-  async () => {
-    return await getUser(42);
+const logger = createLogger({
+  profiler: {
+    thresholdWarnMs: 200,
+    tagsDefault: ['perf'],
+    fieldsDefault: { svc: 'api' },
+    onMeasure: (e) => {
+      // send to Prometheus, etc.
+    },
   },
-  { component: 'users' }
-);
+});
+
+const h = logger.profile('db', { tags: ['start'], query: 'SELECT 1' });
+// ... work ...
+logger.profileEnd(h, { tags: ['end'], rows: 10 });
+
+await logger.timeAsync('io', async () => fetchData(), { tags: ['io'] });
 ```
 
-Each emitted profile log contains:
-
-- message: label
-- profileLabel, durationMs, tags: ['profile']
-- any custom meta provided
-- requestId automatically included when request context is active
+### Consistency with request logging
+To avoid double logging of durations:
+- Use adapters’ built‑in request logging for HTTP frameworks (Express/Koa/Fastify/Nest/Next). Adapters already measure and log request durations with requestId and status.
+- Use profiling APIs (timeSync/timeAsync/profile/profileEnd) for application‑level blocks (DB calls, CPU work, external services) within handlers and background jobs.

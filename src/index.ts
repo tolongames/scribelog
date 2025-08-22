@@ -32,6 +32,8 @@ import { WebSocketTransport } from './transports/websocket';
 import { TcpTransport } from './transports/tcp';
 import { UdpTransport } from './transports/udp';
 
+export type { ProfileEvent } from './types';
+
 // Eksportuj główne funkcje i klasy
 export const createLogger = _createLogger;
 export const Scribelog = _Scribelog;
@@ -45,6 +47,8 @@ export type { AsyncBatchTransportOptions } from './transports/asyncBatch';
 // Eksportuj poziomy
 export { standardLevels };
 export type { LogLevel, LogLevels };
+
+export type { ProfileHandle } from './types';
 
 // --- POCZĄTEK ZMIANY: Dodaj FileTransport i jego opcje do eksportów ---
 // Eksportuj transporty

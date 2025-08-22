@@ -43,6 +43,11 @@ export interface FileTransportOptions {
   utc?: boolean;
 }
 
+export interface ProfileHandle {
+  key: string;
+  label: string;
+}
+
 // Interfejs dla Transportu
 export interface Transport {
   log(processedEntry: Record<string, any> | string): void;
@@ -65,8 +70,39 @@ export interface LoggerOptions {
   handleExceptions?: boolean;
   handleRejections?: boolean;
   exitOnError?: boolean;
+  profiler?: {
+    level?: LogLevel;
+    thresholdWarnMs?: number;
+    thresholdErrorMs?: number;
+    getLevel?: (durationMs: number, meta?: Record<string, any>) => LogLevel;
+    namespaceWithRequestId?: boolean;
+    keyFactory?: (label: string, meta?: Record<string, any>) => string;
+
+    // --- NOWE USTAWIENIA SPRZĄTANIA ---
+    ttlMs?: number; // po ilu ms uznać timer za osierocony i usunąć (np. 300000 = 5 min)
+    cleanupIntervalMs?: number; // jak często sprzątać (np. 60000 = 60s)
+    maxActiveProfiles?: number; // maksymalna liczba aktywnych timerów (np. 1000)
+
+    tagsDefault?: string[]; // domyślne tagi dla logów profilera (poza 'profile')
+    tagsMode?: 'append' | 'prepend' | 'replace'; // jak łączyć tagi: domyślnie 'append'
+    fieldsDefault?: Record<string, any>; // domyślne pola dokładane do wpisów profilera
+    onMeasure?: (event: ProfileEvent) => void;
+  };
 }
 // --- KONIEC ZMIANY ---
+
+export interface ProfileEvent {
+  label: string;
+  durationMs: number;
+  success?: boolean; // undefined dla profileEnd (gdy nie wiemy o sukcesie), true/false dla time*
+  level: LogLevel; // poziom wyliczony przez heurystykę
+  tags?: string[];
+  requestId?: string;
+  // Metadane sklejone (start + end) po zastosowaniu composeTagów i domyślnych pól
+  meta?: Record<string, any>;
+  // Wewnętrzny klucz profilu (gdy dostępny)
+  key?: string;
+}
 
 // --- POCZĄTEK ZMIANY: Dynamiczny Interfejs Loggera ---
 // Podstawowy interfejs z metodami, które *zawsze* istnieją
@@ -77,22 +113,32 @@ interface BaseLoggerInterface {
         timestamp?: Date;
       }
   ): void;
-  log(level: LogLevel, message: any, ...args: any[]): void; // level jest teraz stringiem
+  log(level: LogLevel, message: any, ...args: any[]): void;
 
-  // Właściwości i metody konfiguracyjne
-  level: LogLevel; // Poziom jest teraz stringiem
-  levels: LogLevels; // Nadal Record<string, number>
-  isLevelEnabled(level: LogLevel): boolean; // level jest teraz stringiem
+  level: LogLevel;
+  levels: LogLevels;
+  isLevelEnabled(level: LogLevel): boolean;
   addTransport(transport: Transport): void;
   removeExceptionHandlers?(): void;
-  child(defaultMeta: Record<string, any>): LoggerInterface; // Zwraca pełny interfejs
 
-  profile(label: string, meta?: Record<string, any>): void;
-  profileEnd(label: string, meta?: Record<string, any>): void;
+  dispose(): void;
+
+  child(defaultMeta: Record<string, any>): LoggerInterface;
+
+  // Zwracamy uchwyt, aby uniknąć kolizji
+  profile(label: string, meta?: Record<string, any>): ProfileHandle;
+  // Przyjmujemy label LUB uchwyt
+  profileEnd(
+    labelOrHandle: string | ProfileHandle,
+    meta?: Record<string, any>
+  ): void;
 
   // Alias do profile/profileEnd
   time(label: string, meta?: Record<string, any>): void;
-  timeEnd(label: string, meta?: Record<string, any>): void;
+  timeEnd(
+    labelOrHandle: string | ProfileHandle,
+    meta?: Record<string, any>
+  ): void;
 
   // Wygodne pomiary bloków
   timeSync<T>(label: string, fn: () => T, meta?: Record<string, any>): T;
