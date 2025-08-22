@@ -999,6 +999,7 @@ Notes:
 Scribelog provides high‑resolution timers for measuring synchronous and asynchronous work, now with richer controls.
 
 Configuration (options.profiler):
+
 - level?: LogLevel — default logging level for profiling entries.
 - thresholdWarnMs?: number — promote to 'warn' when duration >= threshold.
 - thresholdErrorMs?: number — promote to 'error' when duration >= threshold.
@@ -1014,6 +1015,7 @@ Configuration (options.profiler):
 - onMeasure?: (event: ProfileEvent) => void — metrics hook called after each measurement (no extra logging).
 
 API:
+
 - profile(label: string, meta?): ProfileHandle — starts a timer and returns a unique handle.
 - profileEnd(labelOrHandle: string | ProfileHandle, meta?): void — ends a timer; accepts the handle or uses LIFO per label.
 - time(label: string, meta?): void — alias for profile(label, meta).
@@ -1022,6 +1024,7 @@ API:
 - timeAsync<T>(label: string, fn: () => Promise<T>, meta?): Promise<T> — measures an async function, logs success or error; rethrows errors.
 
 Behavior:
+
 - Level selection:
   - Uses meta.level (when provided), profiler.level, or 'debug' as base.
   - If getLevel is provided, it overrides thresholds/base.
@@ -1038,14 +1041,15 @@ Behavior:
   - profileEnd on a removed timer is a no-op (no log).
   - Stop the background sweeper with logger.dispose().
 - Fast path:
-  - When profiling would not produce any logs (no debug and no thresholds/getLevel/profiler.level), time*/profile skip overhead and do not log.
+  - When profiling would not produce any logs (no debug and no thresholds/getLevel/profiler.level), time\*/profile skip overhead and do not log.
 - Metrics:
   - onMeasure(event) is called after each measurement:
     - event: { label, durationMs, success?: boolean, level, tags?, requestId?, meta, key? }
-    - success: true/false for time*, undefined for profile/profileEnd.
+    - success: true/false for time\*, undefined for profile/profileEnd.
     - The hook is try/catch wrapped and does not interrupt logging.
 
 Examples:
+
 ```ts
 const logger = createLogger({
   profiler: {
@@ -1066,6 +1070,8 @@ await logger.timeAsync('io', async () => fetchData(), { tags: ['io'] });
 ```
 
 ### Consistency with request logging
+
 To avoid double logging of durations:
+
 - Use adapters’ built‑in request logging for HTTP frameworks (Express/Koa/Fastify/Nest/Next). Adapters already measure and log request durations with requestId and status.
 - Use profiling APIs (timeSync/timeAsync/profile/profileEnd) for application‑level blocks (DB calls, CPU work, external services) within handlers and background jobs.

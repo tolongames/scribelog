@@ -24,7 +24,7 @@
   - Configurable levels and thresholds: promote slow operations to warn/error via thresholdWarnMs/thresholdErrorMs or custom getLevel(duration, meta).
   - Concurrency-safe timers: profile(label) returns a handle; profileEnd accepts a handle or uses LIFO per label. Optional namespacing with requestId or a custom keyFactory.
   - Orphan cleanup: TTL-based cleanup, periodic sweeping, and maxActiveProfiles limit; stop the background cleaner with logger.dispose().
-  - Fast path: when profiling is effectively disabled (no debug, no thresholds/getLevel/profiler.level), time*/profile calls are no-ops.
+  - Fast path: when profiling is effectively disabled (no debug, no thresholds/getLevel/profiler.level), time\*/profile calls are no-ops.
   - Configurable tags and fields: compose tags via tagsDefault/tagsMode (append/prepend/replace) and add fieldsDefault without overriding explicit meta.
   - Metrics hook: profiler.onMeasure(event) is called after each measurement (no extra log), ready for Prometheus/Grafana.
 - **Automatic Error Handling:** Optionally catch and log `uncaughtException` and `unhandledRejection` events, including stack traces.
@@ -100,30 +100,31 @@ Error: Test error
 High‑resolution timers for measuring any code block, with smart defaults and advanced controls.
 
 Configuration (examples):
+
 ```ts
 import { createLogger } from 'scribelog';
 
 const logger = createLogger({
   profiler: {
     // Level heuristics
-    level: 'debug',              // base level for profiling logs (optional)
-    thresholdWarnMs: 200,        // >=200ms -> warn
-    thresholdErrorMs: 1000,      // >=1000ms -> error
+    level: 'debug', // base level for profiling logs (optional)
+    thresholdWarnMs: 200, // >=200ms -> warn
+    thresholdErrorMs: 1000, // >=1000ms -> error
     // or custom level function:
     // getLevel: (durationMs, meta) => (durationMs > 500 ? 'warn' : 'info'),
 
     // Concurrency & keys
-    namespaceWithRequestId: true,                 // key prefix from requestId (if context available)
+    namespaceWithRequestId: true, // key prefix from requestId (if context available)
     // keyFactory: (label, meta) => `${meta?.tenant ?? 'anon'}:${label}:${Date.now()}`,
 
     // Orphan cleanup
-    ttlMs: 5 * 60_000,            // remove timers not ended within 5 min
-    cleanupIntervalMs: 60_000,    // sweep every 60s
-    maxActiveProfiles: 1000,      // drop the oldest when the limit is exceeded
+    ttlMs: 5 * 60_000, // remove timers not ended within 5 min
+    cleanupIntervalMs: 60_000, // sweep every 60s
+    maxActiveProfiles: 1000, // drop the oldest when the limit is exceeded
 
     // Tags & fields
-    tagsDefault: ['perf'],        // added with 'append' mode by default
-    tagsMode: 'append',           // 'append' | 'prepend' | 'replace'
+    tagsDefault: ['perf'], // added with 'append' mode by default
+    tagsMode: 'append', // 'append' | 'prepend' | 'replace'
     fieldsDefault: { service: 'api' },
 
     // Metrics hook (no extra log)
@@ -136,6 +137,7 @@ const logger = createLogger({
 ```
 
 Usage patterns:
+
 ```ts
 // 1) Manual start/stop with handle (best for concurrency)
 const h = logger.profile('db', { query: 'SELECT 1' });
@@ -151,12 +153,15 @@ logger.timeEnd('calc'); // ends the latest 'calc' via LIFO per label
 const value = logger.timeSync('compute', () => 2 + 2, { component: 'math' });
 
 // 4) Async block helper (logs success or error, rethrows on error)
-await logger.timeAsync('load-user', async () => getUser(42), { component: 'users' });
+await logger.timeAsync('load-user', async () => getUser(42), {
+  component: 'users',
+});
 ```
 
 Notes:
+
 - Concurrency-safe: profile(label) returns a unique handle; profileEnd(handle) ends that exact timer. If you pass a plain label, LIFO per label is used.
-- Fast path: when profiling is effectively disabled (no debug and no thresholds/getLevel/profiler.level), time*/profile calls skip overhead and do not log.
+- Fast path: when profiling is effectively disabled (no debug and no thresholds/getLevel/profiler.level), time\*/profile calls skip overhead and do not log.
 - Orphan cleanup: timers not ended in time are removed by TTL sweep; the oldest timers can be dropped if maxActiveProfiles is exceeded. Stop the sweeper via logger.dispose().
 - Tags & fields: tagsDefault/tagsMode and fieldsDefault are applied consistently; tags are deduplicated.
 - Metrics hook: profiler.onMeasure(event) is called after each measurement, with merged meta and composed tags, without producing additional logs.
