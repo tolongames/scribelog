@@ -40,7 +40,7 @@ export class Scribelog implements LoggerInterface {
   private labelStacks = new Map<string, string[]>(); // label -> stos kluczy
   private keyToLabel = new Map<string, string>(); // key -> label (odwrotna mapa)
   private cleanupTimer?: NodeJS.Timeout; // interwał sprzątania osieroconych wpisów
-
+  private beforeExitHandler?: () => void;
   private exitOnError: boolean;
   private exceptionHandler?: (err: Error) => void;
   private rejectionHandler?: (reason: any, _promise: Promise<any>) => void;
@@ -101,7 +101,7 @@ export class Scribelog implements LoggerInterface {
         : [new ConsoleTransport()];
     this.format = options.format || format.defaultSimpleFormat;
     this.defaultMeta = options.defaultMeta;
-    this.exitOnError = options.exitOnError !== false;
+    this.exitOnError = options.exitOnError === true;
     this.profilerOptions = options.profiler || {};
 
     const ttlMs = this.profilerOptions.ttlMs;
@@ -119,6 +119,17 @@ export class Scribelog implements LoggerInterface {
       if (typeof (this.cleanupTimer as any)?.unref === 'function') {
         (this.cleanupTimer as any).unref();
       }
+    }
+
+    const autoClose = options.autoCloseOnBeforeExit !== false;
+    if (autoClose) {
+      this.beforeExitHandler = () => {
+        // nie czekamy blokująco – zainicjuj async close
+        this.close().catch((e) =>
+          console.error('[scribelog] Error in logger.close on beforeExit:', e)
+        );
+      };
+      process.on('beforeExit', this.beforeExitHandler);
     }
 
     // --- Dynamiczne tworzenie metod dla WSZYSTKICH poziomów ---
@@ -148,8 +159,10 @@ export class Scribelog implements LoggerInterface {
           }
         });
       };
-      process.removeAllListeners('uncaughtException');
-      process.on('uncaughtException', this.exceptionHandler);
+      // REFAKTOR: nie usuwaj cudzych listenerów
+      const excMethod =
+        options.exceptionHandlerMode === 'append' ? 'on' : 'prependListener';
+      (process as any)[excMethod]('uncaughtException', this.exceptionHandler);
     }
     if (options.handleRejections) {
       this.rejectionHandler = (reason: any, _promise: Promise<any>) => {
@@ -166,8 +179,9 @@ export class Scribelog implements LoggerInterface {
           }
         });
       };
-      process.removeAllListeners('unhandledRejection');
-      process.on('unhandledRejection', this.rejectionHandler);
+      const rejMethod =
+        options.rejectionHandlerMode === 'append' ? 'on' : 'prependListener';
+      (process as any)[rejMethod]('unhandledRejection', this.rejectionHandler);
     }
   }
 
@@ -181,23 +195,43 @@ export class Scribelog implements LoggerInterface {
   }): void {
     const cb = this.profilerOptions?.onMeasure;
     if (typeof cb !== 'function') return;
+
     try {
-      const { label, durationMs, success, level, metaOut, key } = params;
-      const event = {
-        label,
-        durationMs,
-        success,
-        level,
-        tags: Array.isArray(metaOut.tags) ? metaOut.tags : undefined,
+      let event = {
+        label: params.label,
+        durationMs: params.durationMs,
+        success: params.success,
+        level: params.level,
+        tags: Array.isArray(params.metaOut.tags)
+          ? params.metaOut.tags
+          : undefined,
         requestId:
-          (metaOut &&
-            typeof metaOut.requestId === 'string' &&
-            metaOut.requestId) ||
+          (params.metaOut &&
+            typeof params.metaOut.requestId === 'string' &&
+            params.metaOut.requestId) ||
           getRequestId(),
-        meta: { ...metaOut },
-        key,
+        meta: { ...params.metaOut },
+        key: params.key,
       };
-      cb(event);
+
+      // NOWE: filtr metryki
+      const filter = this.profilerOptions?.onMeasureFilter;
+      if (typeof filter === 'function') {
+        try {
+          const filtered = filter(event as any);
+          if (filtered === null) {
+            // Odrzuć event metryczny
+            return;
+          }
+          if (filtered && typeof filtered === 'object') {
+            event = filtered as any;
+          }
+        } catch (e) {
+          console.warn('[scribelog] profiler.onMeasureFilter hook threw:', e);
+        }
+      }
+
+      cb(event as any);
     } catch (e) {
       // Nigdy nie przerywaj logowania przez błąd hooka
       console.warn('[scribelog] profiler.onMeasure hook threw:', e);
@@ -687,6 +721,32 @@ export class Scribelog implements LoggerInterface {
       throw error;
     }
   }
+
+  public async close(): Promise<void> {
+    // Usuń hook beforeExit, aby uniknąć rekurencji
+    if (this.beforeExitHandler) {
+      process.removeListener('beforeExit', this.beforeExitHandler);
+      this.beforeExitHandler = undefined;
+    }
+    // Zatrzymaj cleanup profilerów
+    this.dispose();
+
+    // Zamknij wszystkie transporty (obsłuż sync i async)
+    const closes: Promise<unknown>[] = [];
+    for (const t of this.transports) {
+      try {
+        const maybe = (t as any)?.close?.();
+        if (maybe && typeof (maybe as any).then === 'function') {
+          closes.push(maybe as Promise<unknown>);
+        }
+      } catch (e) {
+        console.error('[scribelog] Transport close() threw:', e);
+      }
+    }
+    if (closes.length) {
+      await Promise.allSettled(closes);
+    }
+  }
   // Metoda logEntry
   public logEntry(entry: LogEntryInput): void {
     const level = entry.level || 'info';
@@ -716,16 +776,22 @@ export class Scribelog implements LoggerInterface {
   // Metoda child (przekazuje this.levels)
   public child(childMeta: Record<string, any>): LoggerInterface {
     const newDefaultMeta = { ...(this.defaultMeta || {}), ...childMeta };
+
+    // Jeśli shareTransports === true -> przekaż tę samą referencję tablicy.
+    // W przeciwnym razie zrób płytką kopię tablicy (te same instancje transportów).
+    const share = this.options?.shareTransports === true;
+    const transportsForChild = share ? this.transports : [...this.transports];
+
     const childLogger = new Scribelog(
       {
         // Opcje dla dziecka - kopiujemy z rodzica, ale BEZ levels
         ...this.options,
-        levels: undefined, // Usuwamy levels z opcji, aby konstruktor użył parentLevels
+        levels: undefined, // wymuszamy odziedziczenie mapy poziomów przez parentLevels
         level: this.level,
-        transports: this.transports,
+        transports: transportsForChild,
         defaultMeta: newDefaultMeta,
       },
-      this.levels // <<< Przekazujemy AKTUALNY zestaw poziomów rodzica
+      this.levels // <<< przekazujemy AKTUALNY zestaw poziomów rodzica
     );
     return childLogger;
   }
@@ -806,10 +872,17 @@ export class Scribelog implements LoggerInterface {
   private processAndTransport(logEntry: LogInfo): void {
     for (const transport of this.transports) {
       if (this.isTransportLevelEnabled(transport, logEntry.level)) {
-        const formatToUse = transport.format || this.format;
-        const processedOutput = formatToUse({ ...logEntry });
+        const entryObject = { ...logEntry };
+
         try {
-          transport.log(processedOutput);
+          // DLA ConsoleTransport przekaż obiekt, aby mieć pewny dostęp do entry.level
+          if (transport instanceof ConsoleTransport) {
+            (transport as any).log(entryObject);
+          } else {
+            const formatToUse = transport.format || this.format;
+            const processedOutput = formatToUse(entryObject);
+            transport.log(processedOutput);
+          }
         } catch (err) {
           console.error('[scribelog] Error in transport:', err);
         }

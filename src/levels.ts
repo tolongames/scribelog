@@ -15,7 +15,7 @@ export const standardLevels = {
 };
 
 // Typ dla nazw poziomów logowania
-export type LogLevel = keyof typeof standardLevels;
+export type StandardLogLevel = keyof typeof standardLevels;
 
 // Typ dla obiektu poziomów (może być używany do niestandardowych poziomów w przyszłości)
 export type LogLevels = Record<string, number>;

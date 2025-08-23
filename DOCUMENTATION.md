@@ -286,11 +286,13 @@ serviceLogger.info('User requested data', { userId: 'abc' });
 ### 5.5 `handleExceptions`, `handleRejections`, `exitOnError`
 
 - **Type:** `boolean`
-- **Defaults:** `handleExceptions: false`, `handleRejections: false`, `exitOnError: true`
+- **Defaults:** `handleExceptions: false`, `handleRejections: false`, `exitOnError: false`
 - **Description:** Configure automatic handling of global Node.js errors.
   - `handleExceptions: true`: Catches `process.on('uncaughtException')`.
   - `handleRejections: true`: Catches `process.on('unhandledRejection')`.
-  - `exitOnError: false`: Prevents `process.exit(1)` after logging an unhandled error (default is to exit).
+  - `exitOnError: false`: Prevents `process.exit(1)` after logging an unhandled error (default is to not exit). Set to `true` to opt-in to previous behavior.
+  - `exceptionHandlerMode?: 'prepend' | 'append'` — how to register the `uncaughtException` listener (default: `'prepend'`).
+  - `rejectionHandlerMode?: 'prepend' | 'append'` — how to register the `unhandledRejection` listener (default: `'prepend'`).
 
 ```typescript
 // Log fatal errors to a specific file and DO NOT exit
@@ -307,6 +309,12 @@ const fatalLogger = createLogger({
   exitOnError: false, // Keep the process running if possible
 });
 ```
+
+### 5.6 Lifecycle: `logger.close()` and `autoCloseOnBeforeExit`
+
+- `close(): Promise<void>` — flushes and closes all transports (supports async), stops internal timers (profiler cleanup), removes internal hooks.
+- `autoCloseOnBeforeExit?: boolean` (default: `true`) — automatically invokes `close()` on Node’s `beforeExit`.
+- Use together with graceful shutdown in your app.
 
 ---
 
@@ -364,6 +372,10 @@ const myFormat = format.combine(format.timestamp(), format.json());
 ### 6.4 Combining Formatters: `format.combine()`
 
 This is the core function for creating custom format pipelines. It takes multiple formatter functions as arguments and returns a new single `LogFormat` function.
+
+Performance contract:
+
+- Combine processes `info` in-place. A formatter may mutate and return the same object, return a new object, or return a terminal string. See [`format.combine`](src/format.ts).
 
 ```typescript
 const myFormat = format.combine(
@@ -460,6 +472,7 @@ Masks sensitive fields in log metadata (recursively).
 
 - **fields:** `string[]` – array of field names to mask (default: `['password', 'token', 'secret']`)
 - **mask:** `string | (value, key) => any` – value or function to use as mask (default: `'***'`)
+  Note: This formatter does not mutate the input `info`; it builds a masked copy. See [`format.maskSensitive`](src/format.ts).
 
 **Example:**
 
@@ -558,8 +571,9 @@ The default transport, logging to `process.stdout` and `process.stderr`.
 - **`new transports.Console(options?: ConsoleTransportOptions)`**
 - **Options (`ConsoleTransportOptions`):**
   - `level?: LogLevel`: Minimum level for this transport.
-  - `format?: LogFormat`: Specific format for console output. If not provided, uses the logger's format. If the final formatted value passed to `log()` is an object, it defaults to using `format.simple()` to render it.
+  - `format?: LogFormat`: If provided, ConsoleTransport applies its own `format` first. If the result is still an object, it falls back to [`format.simple`](src/format.ts) to render a string.
   - `useStdErrLevels?: LogLevel[]`: Array of levels to direct to `stderr` (default: `['error']`).
+    Level routing: when the processed entry is an object, `entry.level` is used to choose stdout/stderr; for strings a heuristic is used.
 
 ### 7.3 `transports.File`
 
@@ -612,6 +626,11 @@ fileLogger.debug('This debug message will also be written.');
 //   fileLogger.info('Shutting down...');
 //   // Access the transport instance to close it
 //   (fileLogger as any).transports.forEach((t: Transport) => t.close?.());
+//   process.exit(0);
+// });
+// process.on('SIGTERM', async () => {
+//   fileLogger.info('Shutting down...');
+//   await fileLogger.close(); // flush and close all transports
 //   process.exit(0);
 // });
 ```
@@ -855,6 +874,11 @@ dbLogger.debug('Executing query', { query: 'SELECT *' });
 // Log Output includes: { app: 'api', version: '1.1-db', requestId: 'req-123', module: 'database', query: 'SELECT *' }
 ```
 
+Transport sharing:
+
+- By default, child loggers get a shallow copy of the parent's transports array (same instances, different array), so adding/removing transports in a child will not affect the parent.
+- You can opt into sharing the same array reference by setting `shareTransports: true` in [`LoggerOptions`](src/types.ts).
+
 ---
 
 ## 9. Error Handling In-Depth
@@ -869,8 +893,9 @@ Scribelog can automatically log uncaught exceptions and unhandled promise reject
   4.  A `LogInfo` object is created with `level: 'error'`, `exception: true`, `eventType: 'uncaughtException' | 'unhandledRejection'`, the error's message, and the `Error` object itself stored under the `error` key.
   5.  This `LogInfo` object is processed by the logger's format pipeline. The `format.errors()` formatter (included in defaults) extracts `name`, `stack`, `originalReason`, etc., from the `info.error` field and adds them to the top level of the `info` object.
   6.  The formatted log is sent to transports.
-  7.  If `exitOnError` is `true` (default), `process.exit(1)` is called after a short delay.
-- **`exitOnError: boolean` (Default: `true`):** Controls whether the process terminates after logging. Set to `false` if you have other cleanup mechanisms or want the process to attempt recovery (use with caution, especially for `uncaughtException`).
+  7.  If `exitOnError` is `true`, `process.exit(1)` is called after a short delay.
+- **`exitOnError: boolean` (Default: `false`):** Controls whether the process terminates after logging (opt-in). For critical failures you may enable it explicitly.
+- Listener modes: handlers are added without removing other listeners; you can choose `'prepend'` (default) or `'append'` with `exceptionHandlerMode`/`rejectionHandlerMode`.
 - **`removeExceptionHandlers()`:** A method on the logger instance (`(logger as any).removeExceptionHandlers()`) can be called to detach the listeners added by `handleExceptions` and `handleRejections`. This is useful during graceful shutdown or in tests.
 
 ---
@@ -901,7 +926,11 @@ const logger: Logger = createLogger(options);
 
 // Type safety for levels
 const levelCheck: LogLevel = 'debug';
-// const invalidLevel: LogLevel = 'myLevel'; // TypeScript Error
+// const invalidLevel: LogLevel = 'myLevel'; //
+
+// Levels typing
+const levelCheck: LogLevel = 'debug'; // LogLevel is a string; custom levels are allowed.
+// At runtime, levels are validated against the logger's configured levels.
 
 // Implementing a custom transport
 class MyTransport implements Transport {
@@ -1013,6 +1042,7 @@ Configuration (options.profiler):
 - tagsMode?: 'append' | 'prepend' | 'replace' — how to compose tags with 'profile' and provided tags.
 - fieldsDefault?: Record<string, any> — default fields for profiling entries (do not override explicit meta).
 - onMeasure?: (event: ProfileEvent) => void — metrics hook called after each measurement (no extra logging).
+- onMeasureFilter?: (event: ProfileEvent) => ProfileEvent | null | undefined — optional filter to trim/drop the metric event before `onMeasure`.
 
 API:
 

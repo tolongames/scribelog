@@ -13,7 +13,8 @@ import type {
   FileTransportOptions as _FileTransportOptions, // Importuj opcje FileTransport
 } from './types';
 import { AsyncBatchTransport } from './transports/asyncBatch';
-import { standardLevels, LogLevel, LogLevels } from './levels';
+import { standardLevels, LogLevels } from './levels';
+export type { LogLevel } from './types';
 import { ConsoleTransport as _ConsoleTransport } from './transports/console';
 import type { ConsoleTransportOptions as _ConsoleTransportOptions } from './transports/console';
 // --- POCZĄTEK ZMIANY: Importuj FileTransport ---
@@ -46,7 +47,7 @@ export type { AsyncBatchTransportOptions } from './transports/asyncBatch';
 
 // Eksportuj poziomy
 export { standardLevels };
-export type { LogLevel, LogLevels };
+export type { LogLevels };
 
 export type { ProfileHandle } from './types';
 

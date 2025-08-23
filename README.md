@@ -1,7 +1,7 @@
 # Scribelog 🪵📝
 
 [![npm version](https://img.shields.io/npm/v/scribelog.svg)](https://www.npmjs.com/package/scribelog)
-[![npm downloads](https://img.shields.io/npm/dm/scribelog.svg)](https://www.npmjs.com/package/scribelog)
+[![npm downloads](https://img.shields.io/npm/dt/scribelog.svg)](https://www.npmjs.com/package/scribelog)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Build Status](https://github.com/tolongames/scribelog/actions/workflows/node.js.yml/badge.svg)](https://github.com/tolongames/scribelog/actions/workflows/node.js.yml) <!-- Zaktualizuj URL, jeśli trzeba -->
 
@@ -21,12 +21,8 @@
 - **Framework adapters (Express, Koa, Fastify, NestJS, Next.js):**
   Ready-to-use middleware/hooks/interceptors for request/response logging with automatic requestId (AsyncLocalStorage), duration, status, and framework tags. Minimal boilerplate.
 - **Profiling & Timing:** Lightweight high-resolution timers (profile/time APIs), including sync/async helpers and start/end merging of metadata.
-  - Configurable levels and thresholds: promote slow operations to warn/error via thresholdWarnMs/thresholdErrorMs or custom getLevel(duration, meta).
-  - Concurrency-safe timers: profile(label) returns a handle; profileEnd accepts a handle or uses LIFO per label. Optional namespacing with requestId or a custom keyFactory.
-  - Orphan cleanup: TTL-based cleanup, periodic sweeping, and maxActiveProfiles limit; stop the background cleaner with logger.dispose().
-  - Fast path: when profiling is effectively disabled (no debug, no thresholds/getLevel/profiler.level), time\*/profile calls are no-ops.
-  - Configurable tags and fields: compose tags via tagsDefault/tagsMode (append/prepend/replace) and add fieldsDefault without overriding explicit meta.
-  - Metrics hook: profiler.onMeasure(event) is called after each measurement (no extra log), ready for Prometheus/Grafana.
+  - Configurable levels and thresholds: promote slow operations to warn/error via `thresholdWarnMs`/`thresholdErrorMs` or custom `getLevel(duration, meta)`.
+  - Concurrency-safe timers, orphan cleanup (TTL/maxActive), fast path, configurable tags/fields, and metrics hook.
 - **Automatic Error Handling:** Optionally catch and log `uncaughtException` and `unhandledRejection` events, including stack traces.
 - **Remote Transports (HTTP, WebSocket, TCP, UDP):**
   Send logs over the network to ELK/Logstash, Graylog, Datadog, or custom collectors. Supports batching (AsyncBatch) and gzip (HTTP).
@@ -34,6 +30,8 @@
 - **Asynchronous Batch Logging:** Buffer and batch log messages before sending them to a target transport to reduce I/O overhead. See examples in Basic Configuration.
 - **Automatic Request/Trace ID Propagation:** Automatically attaches a request/trace ID to every log message using AsyncLocalStorage. See usage in Basic Configuration.
 - **Sensitive Data Masking:** Mask sensitive fields (passwords, tokens, API keys) with the built‑in `format.maskSensitive` formatter. See usage in Basic Configuration.
+- **Logger Lifecycle:** Graceful shutdown via `logger.close()`; optional auto-close on `beforeExit`.
+- **Non-invasive Error Listeners:** Handlers are registered via `process.prependListener`/`process.on` (no removing foreign listeners), configurable modes.
 - **TypeScript First:** Written entirely in TypeScript for type safety and excellent editor autocompletion.
 
 ---
@@ -108,29 +106,22 @@ const logger = createLogger({
   profiler: {
     // Level heuristics
     level: 'debug', // base level for profiling logs (optional)
-    thresholdWarnMs: 200, // >=200ms -> warn
-    thresholdErrorMs: 1000, // >=1000ms -> error
-    // or custom level function:
+    thresholdWarnMs: 200,
+    thresholdErrorMs: 1000,
     // getLevel: (durationMs, meta) => (durationMs > 500 ? 'warn' : 'info'),
-
-    // Concurrency & keys
-    namespaceWithRequestId: true, // key prefix from requestId (if context available)
-    // keyFactory: (label, meta) => `${meta?.tenant ?? 'anon'}:${label}:${Date.now()}`,
-
-    // Orphan cleanup
-    ttlMs: 5 * 60_000, // remove timers not ended within 5 min
-    cleanupIntervalMs: 60_000, // sweep every 60s
-    maxActiveProfiles: 1000, // drop the oldest when the limit is exceeded
-
-    // Tags & fields
-    tagsDefault: ['perf'], // added with 'append' mode by default
-    tagsMode: 'append', // 'append' | 'prepend' | 'replace'
-    fieldsDefault: { service: 'api' },
-
+    // ...existing code...
     // Metrics hook (no extra log)
     onMeasure: (e) => {
       // e = { label, durationMs, success?: boolean, level, tags?, requestId?, meta, key? }
       // Send to Prometheus, StatsD, etc.
+    },
+    // Optional: filter/trim metric event before onMeasure
+    onMeasureFilter: (e) => {
+      if (e.meta) {
+        const { error, stack, ...rest } = e.meta;
+        e.meta = rest; // drop heavy fields
+      }
+      return e; // or return null to drop the event entirely
     },
   },
 });
@@ -161,10 +152,12 @@ await logger.timeAsync('load-user', async () => getUser(42), {
 Notes:
 
 - Concurrency-safe: profile(label) returns a unique handle; profileEnd(handle) ends that exact timer. If you pass a plain label, LIFO per label is used.
+
 - Fast path: when profiling is effectively disabled (no debug and no thresholds/getLevel/profiler.level), time\*/profile calls skip overhead and do not log.
 - Orphan cleanup: timers not ended in time are removed by TTL sweep; the oldest timers can be dropped if maxActiveProfiles is exceeded. Stop the sweeper via logger.dispose().
 - Tags & fields: tagsDefault/tagsMode and fieldsDefault are applied consistently; tags are deduplicated.
-- Metrics hook: profiler.onMeasure(event) is called after each measurement, with merged meta and composed tags, without producing additional logs.
+- Add `profiler.onMeasureFilter(event)` to trim or drop heavy fields before `onMeasure` runs.
+- `onMeasure(event)` is still called after each measurement (no extra log produced).
 
 ---
 
@@ -185,6 +178,8 @@ Configure your logger via `createLogger(options)`. Key options:
 - `transports`: Array of `new transports.Console({...})` or `new transports.File({...})`. Default is one Console transport.
 - `defaultMeta`: An object with data to add to every log message.
 - `handleExceptions`, `handleRejections`, `exitOnError`: For automatic error catching.
+- `exceptionHandlerMode` / `rejectionHandlerMode`: `'prepend' | 'append'` — how to register process listeners (default: `'prepend'`).
+- `autoCloseOnBeforeExit`: `boolean` — automatically call `logger.close()` on Node’s `beforeExit` (default: `true`).
 
 **Example 1: Logging JSON to a File**
 
@@ -438,6 +433,11 @@ Notes:
 - Use AsyncBatch to reduce network overhead and smooth bursts.
 - Redact secrets before sending: format.maskSensitive([...]).
 - requestId from async context is automatically attached to logs.
+
+## 🔌 Lifecycle: close() & beforeExit
+
+- `await logger.close()`: flushes and closes all transports (supports async), stops internal profilers’ cleanup, and removes the internal `beforeExit` hook.
+- `autoCloseOnBeforeExit` (default true): when enabled, the logger registers a `beforeExit` hook that calls `close()` automatically.
 
 ---
 

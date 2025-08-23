@@ -51,9 +51,9 @@ export interface ProfileHandle {
 // Interfejs dla Transportu
 export interface Transport {
   log(processedEntry: Record<string, any> | string): void;
-  level?: LogLevel; // Używa teraz ogólnego typu string
+  level?: LogLevel;
   format?: LogFormat;
-  close?(): void;
+  close?(): void | Promise<void>; // pozwól na async close
 }
 
 // --- POCZĄTEK ZMIANY: Modyfikacja LoggerOptions ---
@@ -70,6 +70,10 @@ export interface LoggerOptions {
   handleExceptions?: boolean;
   handleRejections?: boolean;
   exitOnError?: boolean;
+  exceptionHandlerMode?: 'prepend' | 'append';
+  rejectionHandlerMode?: 'prepend' | 'append';
+  autoCloseOnBeforeExit?: boolean;
+  shareTransports?: boolean;
   profiler?: {
     level?: LogLevel;
     thresholdWarnMs?: number;
@@ -87,6 +91,7 @@ export interface LoggerOptions {
     tagsMode?: 'append' | 'prepend' | 'replace'; // jak łączyć tagi: domyślnie 'append'
     fieldsDefault?: Record<string, any>; // domyślne pola dokładane do wpisów profilera
     onMeasure?: (event: ProfileEvent) => void;
+    onMeasureFilter?: (event: ProfileEvent) => ProfileEvent | null | undefined;
   };
 }
 // --- KONIEC ZMIANY ---
@@ -122,6 +127,8 @@ interface BaseLoggerInterface {
   removeExceptionHandlers?(): void;
 
   dispose(): void;
+
+  close(): Promise<void>;
 
   child(defaultMeta: Record<string, any>): LoggerInterface;
 

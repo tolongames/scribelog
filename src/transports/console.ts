@@ -9,6 +9,7 @@ export interface ConsoleTransportOptions {
   useStdErrLevels?: LogLevel[];
 }
 
+// ...existing code...
 export class ConsoleTransport implements Transport {
   public level?: LogLevel;
   public format?: LogFormat;
@@ -21,33 +22,60 @@ export class ConsoleTransport implements Transport {
   }
 
   log(processedEntry: Record<string, any> | string): void {
-    let output: string;
+    let output: string | undefined;
     let entryLevel: LogLevel | undefined = undefined;
 
-    // Ustal, czy używać kolorów dla fallbacku format.simple()
     const useColors = chalk.supportsColor
       ? chalk.supportsColor.hasBasic
       : false;
 
-    if (typeof processedEntry === 'string') {
-      output = processedEntry;
-      // Prosta próba odgadnięcia poziomu ze stringa
-      const upperCaseEntry = output.toUpperCase();
-      if (upperCaseEntry.includes('[ERROR]')) entryLevel = 'error';
-      else if (upperCaseEntry.includes('[WARN]')) entryLevel = 'warn';
-      // ...
-    } else if (typeof processedEntry === 'object' && processedEntry !== null) {
-      // Odczytaj poziom z obiektu (powinien być dodany przez format.level())
+    if (processedEntry && typeof processedEntry === 'object') {
+      // Preferuj level z obiektu (bez heurystyk)
       if (processedEntry.level && typeof processedEntry.level === 'string') {
         entryLevel = processedEntry.level as LogLevel;
       }
-      // Zastosuj format.simple jako fallback do konwersji obiektu na string
-      output = format.simple({ colors: useColors })(processedEntry) as string;
+
+      const formatter = this.format;
+      if (formatter) {
+        try {
+          const res = formatter({ ...processedEntry });
+          if (typeof res === 'string') {
+            output = res;
+          } else if (res && typeof res === 'object') {
+            output = format.simple({ colors: useColors })(res) as string;
+          } else {
+            output = format.simple({ colors: useColors })(
+              processedEntry
+            ) as string;
+          }
+        } catch (e) {
+          console.error('[scribelog] ConsoleTransport format error:', e);
+          output = format.simple({ colors: useColors })(
+            processedEntry
+          ) as string;
+        }
+      } else {
+        output = format.simple({ colors: useColors })(processedEntry) as string;
+      }
+    } else if (typeof processedEntry === 'string') {
+      // Fallback dla stringów (np. custom transport/formaty zwróciły string)
+      output = processedEntry;
+
+      // Minimalna heurystyka tylko awaryjnie
+      const upper = output.toUpperCase();
+      if (upper.includes('[ERROR]')) entryLevel = 'error';
+      else if (upper.includes('[WARN]')) entryLevel = 'warn';
+      else if (upper.includes('[INFO]')) entryLevel = 'info';
+      else if (upper.includes('[DEBUG]')) entryLevel = 'debug';
+      else if (upper.includes('[HTTP]')) entryLevel = 'http';
+      else if (upper.includes('[VERBOSE]')) entryLevel = 'verbose';
+      else if (upper.includes('[SILLY]')) entryLevel = 'silly';
     } else {
-      return; // Ignoruj inne typy
+      return;
     }
 
-    // Wybierz strumień wyjścia
+    if (output === undefined) return;
+
     if (entryLevel && this.useStdErrLevels.has(entryLevel)) {
       console.error(output);
     } else {
@@ -55,3 +83,4 @@ export class ConsoleTransport implements Transport {
     }
   }
 }
+// ...existing code...

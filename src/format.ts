@@ -361,16 +361,34 @@ export const simple = (options: SimpleOptions = {}): LogFormat => {
 
 // --- Funkcja Kompozycyjna ---
 export const combine = (...formats: LogFormat[]): LogFormat => {
+  /**
+   * Kontrakt:
+   * - Formatery powinny modyfikować przekazany obiekt 'info' in-place i zwracać ten sam obiekt,
+   *   lub mogą zwrócić nowy obiekt (wtedy pipeline przyjmie referencję do nowego).
+   * - Jeśli formatter zwraca string, pipeline kończy i zwraca ten string.
+   */
   return (info: Record<string, any>): Record<string, any> | string => {
-    let currentInfo: Record<string, any> = { ...info };
-    for (const format of formats) {
-      const result = format(currentInfo);
+    // Unikamy początkowej kopii — pracujemy na wejściowym obiekcie
+    let currentInfo: Record<string, any> = info;
+
+    for (const fmt of formats) {
+      const result = fmt(currentInfo);
+
       if (typeof result === 'string') {
+        // Formatter zakończył pipeline stringiem
         return result;
       }
-      currentInfo =
-        typeof result === 'object' && result !== null ? result : currentInfo;
+
+      if (result && typeof result === 'object') {
+        // Formatter mógł zwrócić nowy obiekt – przełącz referencję
+        if (result !== currentInfo) {
+          currentInfo = result;
+        }
+        // Jeśli zwrócił ten sam obiekt, kontynuujemy bez alokacji
+      }
+      // Gdy formatter zwróci null/undefined, pozostaw currentInfo bez zmian
     }
+
     return currentInfo;
   };
 };
@@ -410,21 +428,43 @@ export function maskSensitive(
   fields: string[] = ['password', 'token', 'secret'],
   mask: string | ((value: any, key: string) => any) = '***'
 ): LogFormat {
+  const maskFn = (value: any, key: string) =>
+    typeof mask === 'function'
+      ? (mask as (v: any, k: string) => any)(value, key)
+      : mask;
   // Rekurencyjnie maskuj pola w obiekcie
-  function maskObject(obj: any): any {
-    if (obj && typeof obj === 'object') {
-      for (const key of Object.keys(obj)) {
-        if (fields.includes(key)) {
-          obj[key] = typeof mask === 'function' ? mask(obj[key], key) : mask;
-        } else if (typeof obj[key] === 'object' && obj[key] !== null) {
-          obj[key] = maskObject(obj[key]);
-        }
+
+  function cloneAndMask(value: any): any {
+    // Proste typy – zwróć wprost
+    if (
+      value === null ||
+      typeof value !== 'object' ||
+      value instanceof Date ||
+      value instanceof RegExp ||
+      value instanceof Error
+    ) {
+      return value;
+    }
+
+    if (Array.isArray(value)) {
+      return value.map((v) => cloneAndMask(v));
+    }
+
+    const out: Record<string, any> = {};
+    for (const k of Object.keys(value)) {
+      if (fields.includes(k)) {
+        out[k] = maskFn(value[k], k);
+      } else {
+        out[k] = cloneAndMask(value[k]);
       }
     }
-    return obj;
+    return out;
   }
   return (info: Record<string, any>) => {
-    // Maskuj tylko w metadanych, nie w level/message/timestamp
+    // Nie modyfikuj źródła — zacznij od płytkiej kopii
+    const out: Record<string, any> = { ...info };
+
+    // Tych pól nie maskujemy ani nie dotykamy (pozostają bez zmian)
     const forbidden = new Set([
       'level',
       'message',
@@ -442,15 +482,19 @@ export function maskSensitive(
         Object.prototype.hasOwnProperty.call(info, key) &&
         !forbidden.has(key)
       ) {
-        if (typeof info[key] === 'object' && info[key] !== null) {
-          info[key] = maskObject(info[key]);
-        }
+        const val = info[key];
+
+        // Jeśli samo pole jest wrażliwe – zamaskuj całe pole (bez zaglądania w głąb)
         if (fields.includes(key)) {
-          info[key] = typeof mask === 'function' ? mask(info[key], key) : mask;
+          out[key] = maskFn(val, key);
+        } else {
+          // W przeciwnym razie sklonuj i zamaskuj wnętrze (rekurencyjnie)
+          out[key] = cloneAndMask(val);
         }
       }
     }
-    return info;
+
+    return out;
   };
 }
 // ...existing code...

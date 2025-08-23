@@ -375,10 +375,11 @@ describe('Error Handling', () => {
     logger = createLogger({
       transports: [mockTransport],
       handleRejections: true,
+      exitOnError: true, // opt-in do wyjścia procesu (poprzednie zachowanie)
     });
     const reason = 'Just a string reason';
-    const handler = (logger as any).rejectionHandler; // Uzyskaj dostęp do prywatnej metody (dla testu)
-    handler(reason, null); // Wywołaj handler bezpośrednio
+    const handler = (logger as any).rejectionHandler;
+    handler(reason, null);
     expect(transportLogSpy).toHaveBeenCalledTimes(1);
     const callArg = transportLogSpy.mock.calls[0][0] as string;
     // Sprawdzenia w expectSimpleLog powinny teraz działać poprawnie
@@ -1859,5 +1860,145 @@ describe('profiler: onMeasure hook', () => {
     const ev = events.at(-1);
     expect(ev.requestId).toBe('req-hook');
     logger.dispose?.();
+  });
+});
+
+class CloseableTransport implements Transport {
+  level?: LogLevel;
+  format?: LogFormat;
+  outputs: any[] = [];
+  public onClose?: jest.Mock<any, any>;
+  constructor(opts?: {
+    level?: LogLevel;
+    format?: LogFormat;
+    onClose?: jest.Mock;
+  }) {
+    this.level = opts?.level;
+    this.format = opts?.format || ((x: any) => x);
+    this.onClose = opts?.onClose;
+  }
+  log(output: any): void {
+    this.outputs.push(output);
+  }
+  close(): void | Promise<void> {
+    return this.onClose ? this.onClose() : undefined;
+  }
+}
+
+describe('logger lifecycle: close() & beforeExit', () => {
+  const fmt: LogFormat = (i: any) => i;
+
+  test('close() calls close on all transports (sync/async) and waits; errors are caught', async () => {
+    const syncClose = jest.fn();
+    const asyncClose = jest
+      .fn()
+      .mockImplementation(
+        () => new Promise<void>((res) => setTimeout(res, 20))
+      );
+    const throwingClose = jest.fn(() => {
+      throw new Error('close-fail');
+    });
+
+    const t1 = new CloseableTransport({ format: fmt, onClose: syncClose });
+    const t2 = new CloseableTransport({ format: fmt, onClose: asyncClose });
+    const t3 = new CloseableTransport({ format: fmt, onClose: throwingClose });
+
+    const errSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+    const logger: any = createLogger({
+      transports: [t1, t2, t3],
+      autoCloseOnBeforeExit: false,
+    });
+
+    // emit some logs
+    logger.info('x', { a: 1 });
+
+    const start = Date.now();
+    await logger.close();
+    const took = Date.now() - start;
+
+    expect(syncClose).toHaveBeenCalledTimes(1);
+    expect(asyncClose).toHaveBeenCalledTimes(1);
+    expect(throwingClose).toHaveBeenCalledTimes(1);
+    // powinno poczekać przynajmniej ~15ms (luźne sprawdzenie async wait)
+    expect(took).toBeGreaterThanOrEqual(15);
+
+    expect(errSpy).toHaveBeenCalled(); // błąd z throwingClose przechwycony
+    errSpy.mockRestore();
+
+    // cleanupTimer powinien być wyczyszczony przez close()->dispose()
+    expect(logger.cleanupTimer).toBeUndefined();
+  });
+
+  test('autoCloseOnBeforeExit: triggers once on beforeExit and removes its handler', async () => {
+    const onClose = jest.fn();
+    const t = new CloseableTransport({ format: fmt, onClose });
+
+    const logger: any = createLogger({
+      transports: [t],
+      // domyślnie autoCloseOnBeforeExit === true
+    });
+
+    // Wyemituj beforeExit
+    process.emit('beforeExit', 0);
+    // Daj event loopowi czas na wywołanie async close()
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+
+    // Ponowny beforeExit nie powinien już wywołać close (handler usunięty w close())
+    process.emit('beforeExit', 0);
+    await new Promise((r) => setTimeout(r, 10));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  test('autoCloseOnBeforeExit: can be disabled', async () => {
+    const onClose = jest.fn();
+    const t = new CloseableTransport({ format: fmt, onClose });
+
+    const logger: any = createLogger({
+      transports: [t],
+      autoCloseOnBeforeExit: false,
+    });
+
+    process.emit('beforeExit', 0);
+    await new Promise((r) => setTimeout(r, 10));
+
+    // Nie wywołuje się automatycznie
+    expect(onClose).not.toHaveBeenCalled();
+
+    // Ręczne zamknięcie działa
+    await logger.close();
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  test('close() handles transports without close()', async () => {
+    class NoCloseTransport implements Transport {
+      level?: LogLevel;
+      format?: LogFormat;
+      outputs: any[] = [];
+      constructor(opts?: { level?: LogLevel; format?: LogFormat }) {
+        this.level = opts?.level;
+        this.format = opts?.format || ((x: any) => x);
+      }
+      log(o: any) {
+        this.outputs.push(o);
+      }
+      // brak close()
+    }
+
+    const noClose = new NoCloseTransport({ format: fmt });
+    const withClose = new CloseableTransport({
+      format: fmt,
+      onClose: jest.fn(),
+    });
+
+    const logger: any = createLogger({
+      transports: [noClose, withClose],
+      autoCloseOnBeforeExit: false,
+    });
+
+    await expect(logger.close()).resolves.toBeUndefined();
+    expect(withClose.onClose).toHaveBeenCalledTimes(1);
   });
 });
