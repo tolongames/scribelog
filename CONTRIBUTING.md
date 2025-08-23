@@ -14,17 +14,21 @@ Thanks for your interest in contributing! This guide explains how to set up the 
 
 ## Quick start
 
-1) Fork the repo and clone your fork:
+1. Fork the repo and clone your fork:
+
 - git clone https://github.com/<your-username>/scribelog.git
 - cd scribelog
 
-2) Install dependencies:
+2. Install dependencies:
+
 - npm ci
 
-3) Run tests to verify your setup:
+3. Run tests to verify your setup:
+
 - npm test
 
-4) Optional: run formatting & lint locally:
+4. Optional: run formatting & lint locally:
+
 - npm run format:check
 - npm run lint
 
@@ -87,14 +91,14 @@ The CI pipeline runs format:check, lint, and tests (see [.github/workflows/node.
 
 ## Adding a new transport
 
-1) Create a file in [src/transports/](src/transports) (e.g., http/tcp/udp/websocket already exist).
-2) Implement the [`Transport`](src/types.ts) interface.
-3) Prefer accepting a `format?: LogFormat` and default to JSON via [`format.defaultJsonFormat`](src/format.ts).
-4) Export it in the public API:
+1. Create a file in [src/transports/](src/transports) (e.g., http/tcp/udp/websocket already exist).
+2. Implement the [`Transport`](src/types.ts) interface.
+3. Prefer accepting a `format?: LogFormat` and default to JSON via [`format.defaultJsonFormat`](src/format.ts).
+4. Export it in the public API:
    - Add import and entry to `transports` object in [src/index.ts](src/index.ts)
    - Export the options type from [src/index.ts](src/index.ts)
-5) Add tests under [test/](test). See AsyncBatch tests for patterns.
-6) Document usage in [DOCUMENTATION.md](DOCUMENTATION.md), Transports section.
+5. Add tests under [test/](test). See AsyncBatch tests for patterns.
+6. Document usage in [DOCUMENTATION.md](DOCUMENTATION.md), Transports section.
 
 ## Adding/adjusting formatters
 
