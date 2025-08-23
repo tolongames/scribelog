@@ -4,10 +4,9 @@
 
 | Version | Supported              |
 | ------- | ---------------------- |
-| 2.1.0   | ✅ full support        |
-| 2.0.0   | ✅ security fixes only |
-| 1.2.x   | ❌ no longer supported |
-| < 1.2.0 | ❌ no longer supported |
+| 2.1.x   | ✅ full support        |
+| 2.0.x   | ✅ security fixes only |
+| < 2.0.0 | ❌ no longer supported |
 
 ## Reporting a Vulnerability
 
