@@ -1,34 +1,50 @@
+name: Node.js CI & Publish
+
 permissions:
   contents: read
-name: Node.js CI & Publish
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      - '**'
   pull_request:
-    branches: [main]
+    branches:
+      - main
   release:
     types: [published]
 
-# ...existing code...
 jobs:
   build:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         node-version: [18.x, 20.x, 22.x]
     steps:
       - uses: actions/checkout@v4
+
       - name: Use Node.js ${{ matrix.node-version }}
         uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
-          cache: 'npm'
+
+      - name: Cache node modules
+        uses: actions/cache@v3
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-node-${{ matrix.node-version }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-${{ matrix.node-version }}-
+
       - name: Install dependencies
         run: npm ci
+
       - name: Check formatting
         run: npm run format:check
+
       - name: Lint code
         run: npm run lint
+
       - name: Run tests
         run: npm test
