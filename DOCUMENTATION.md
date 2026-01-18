@@ -316,6 +316,28 @@ const fatalLogger = createLogger({
 - `autoCloseOnBeforeExit?: boolean` (default: `true`) — automatically invokes `close()` on Node’s `beforeExit`.
 - Use together with graceful shutdown in your app.
 
+### 5.7 Sampling & Rate Limiting
+
+Control log volume and noise in production with two complementary features:
+
+- **`sampler?: (entry: Record<string, any>) => boolean`** — a predicate run for each log entry before formatting/transports. When it returns `false`, the entry is dropped. Typical strategies: allow only certain levels, keywords in `message`, or metadata presence (e.g., `userId`).
+
+- **`rateLimit?: { maxPerSecond: number; window?: number }`** — drop logs that exceed `maxPerSecond` within a rolling time window (default `window = 1000 ms`). Counters reset automatically; updating `rateLimit` via `updateOptions` resets counters immediately.
+
+Order of application: `sampler` runs first; entries that pass are then subject to `rateLimit`.
+
+Example:
+
+```ts
+const logger = createLogger({
+  sampler: (entry) => entry.level === 'error' || Math.random() < 0.05,
+  rateLimit: { maxPerSecond: 100, window: 1000 },
+});
+
+// Heavy burst — sampler reduces volume; rate limit caps throughput
+for (let i = 0; i < 1000; i++) logger.info('burst', { i });
+```
+
 ---
 
 ## 6. Formatting (Deep Dive)
@@ -733,6 +755,9 @@ new transports.AsyncBatch(options: {
   immediate?: boolean;       // If true, disables batching and sends logs immediately
   level?: LogLevel;          // Optional: minimum level for this transport
   format?: LogFormat;        // Optional: custom format for this transport
+  // NEW: backpressure controls
+  highWaterMark?: number;    // Max buffer size before overflow policy applies (default: 1000)
+  overflowPolicy?: 'block' | 'drop-oldest' | 'drop-newest'; // Default: 'drop-oldest'
 })
 ```
 
@@ -742,6 +767,11 @@ new transports.AsyncBatch(options: {
 - When the buffer reaches `batchSize`, all logs are flushed to the target transport.
 - If `flushIntervalMs` elapses before the buffer is full, the current buffer is flushed.
 - Calling `.close()` on the transport will flush any remaining logs and close the underlying target transport.
+ - Backpressure: When `buffer.length >= highWaterMark`, apply `overflowPolicy`:
+   - `drop-oldest`: remove the oldest entry (preferred default for keeping recent data)
+   - `drop-newest`: reject the incoming entry
+   - `block`: accept all entries (unbounded growth; use with care)
+   The transport exposes `droppedCount` for visibility into pressure.
 
 **Example:**
 
@@ -754,6 +784,8 @@ const asyncBatch = new transports.AsyncBatch({
   target: fileTransport,
   batchSize: 5,
   flushIntervalMs: 2000,
+  highWaterMark: 500,
+  overflowPolicy: 'drop-oldest',
 });
 
 const logger = createLogger({
@@ -770,6 +802,7 @@ logger.info('Second log');
 - You can wrap any transport (file, network, etc.) with `AsyncBatchTransport`.
 - If you set `immediate: true`, logs are passed through without batching.
 - Always call `.close()` on the transport during shutdown to ensure all logs are flushed.
+ - Monitoring: read `asyncBatch.droppedCount` to track entries dropped due to backpressure.
 
 ### 7.7 Remote Transports (HTTP, WebSocket, TCP, UDP)
 
@@ -827,6 +860,8 @@ const batched = new transports.AsyncBatch({
   target: httpT,
   batchSize: 20,
   flushIntervalMs: 1000,
+  highWaterMark: 1000,
+  overflowPolicy: 'drop-oldest',
 });
 
 const logger = createLogger({
@@ -1105,3 +1140,39 @@ To avoid double logging of durations:
 
 - Use adapters’ built‑in request logging for HTTP frameworks (Express/Koa/Fastify/Nest/Next). Adapters already measure and log request durations with requestId and status.
 - Use profiling APIs (timeSync/timeAsync/profile/profileEnd) for application‑level blocks (DB calls, CPU work, external services) within handlers and background jobs.
+
+## 13. Runtime Reconfiguration
+
+Adjust logger behavior on the fly without restarting your application.
+
+### API
+
+- **`logger.updateOptions(options: Partial<LoggerOptions>)`** — updates multiple options at once. Supported keys include `level`, `transports`, `format`, `defaultMeta`, `profiler`, `sampler`, and `rateLimit`.
+- **`logger.updateLevel(level: LogLevel)`** — changes the minimum enabled level when valid for the configured `levels`.
+- **`logger.addTransport(transport: Transport)`** — adds a transport instance.
+- **`logger.removeTransport(transport: Transport)`** — removes a transport instance (no-op if not present).
+
+### Behavior & Caveats
+
+- Unknown `level` values are ignored with a warning; levels are validated against the logger’s configured `levels` map.
+- `updateOptions({ defaultMeta })` merges keys into existing defaults without removing previous keys; call `updateOptions({ defaultMeta: {} })` then re-add keys for a full reset.
+- `updateOptions({ rateLimit })` resets internal counters and window timers immediately.
+- Transports in child loggers:
+  - By default child loggers inherit the same transport instances via a shallow copy of the array; `shareTransports: true` opts into sharing the same array reference.
+
+### Examples
+
+```ts
+// Switch to quiet production mode
+logger.updateOptions({ level: 'error' });
+
+// Redirect logs to a different destination
+logger.removeTransport(oldTransport);
+logger.addTransport(newTransport);
+
+// Enable sampling during high load
+logger.updateOptions({ sampler: () => Math.random() < 0.2 });
+
+// Update rate limit window and cap
+logger.updateOptions({ rateLimit: { maxPerSecond: 50, window: 500 } });
+```
