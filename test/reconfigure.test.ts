@@ -32,7 +32,10 @@ describe('Runtime Reconfiguration', () => {
   });
 
   afterEach(() => {
-    if (logger && typeof (logger as any).removeExceptionHandlers === 'function') {
+    if (
+      logger &&
+      typeof (logger as any).removeExceptionHandlers === 'function'
+    ) {
       (logger as any).removeExceptionHandlers();
     }
   });
@@ -326,7 +329,10 @@ describe('Runtime Reconfiguration', () => {
       // Add sampler that only allows messages with 'important'
       logger.updateOptions({
         sampler: (entry) => {
-          return typeof entry.message === 'string' && entry.message.includes('important');
+          return (
+            typeof entry.message === 'string' &&
+            entry.message.includes('important')
+          );
         },
       });
 

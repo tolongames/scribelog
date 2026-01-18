@@ -131,7 +131,10 @@ describe('AsyncBatchTransport - Backpressure', () => {
     (batchTransport as any).flush();
 
     expect(mockTransport.logs.length).toBe(2);
-    expect(mockTransport.logs.map((l: any) => l.message)).toEqual(['msg2', 'msg3']);
+    expect(mockTransport.logs.map((l: any) => l.message)).toEqual([
+      'msg2',
+      'msg3',
+    ]);
   });
 
   test('default highWaterMark is 1000', () => {
@@ -317,9 +320,12 @@ describe('AsyncBatchTransport - Backpressure', () => {
     }
 
     // Verify we kept the most recent entries
-    const logged = mockTransport.logs as Array<{ message: string; index: number }>;
+    const logged = mockTransport.logs as Array<{
+      message: string;
+      index: number;
+    }>;
     const lastIndex = logged[logged.length - 1]?.index;
-    
+
     // Last logged entry should be 200 (most recent)
     expect(lastIndex).toBe(200);
     expect(logged.length).toBe(50); // Only highWaterMark items kept

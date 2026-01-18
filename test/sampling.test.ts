@@ -24,7 +24,10 @@ describe('Sampling', () => {
   });
 
   afterEach(() => {
-    if (logger && typeof (logger as any).removeExceptionHandlers === 'function') {
+    if (
+      logger &&
+      typeof (logger as any).removeExceptionHandlers === 'function'
+    ) {
       (logger as any).removeExceptionHandlers();
     }
   });
@@ -77,7 +80,10 @@ describe('Sampling', () => {
       transports: [capture],
       sampler: (entry) => {
         // Only allow messages containing 'important'
-        return typeof entry.message === 'string' && entry.message.includes('important');
+        return (
+          typeof entry.message === 'string' &&
+          entry.message.includes('important')
+        );
       },
     });
 
@@ -146,7 +152,10 @@ describe('Rate Limiting', () => {
   });
 
   afterEach(() => {
-    if (logger && typeof (logger as any).removeExceptionHandlers === 'function') {
+    if (
+      logger &&
+      typeof (logger as any).removeExceptionHandlers === 'function'
+    ) {
       (logger as any).removeExceptionHandlers();
     }
     jest.useRealTimers();
@@ -285,7 +294,10 @@ describe('Sampling and Rate Limiting Combined', () => {
   });
 
   afterEach(() => {
-    if (logger && typeof (logger as any).removeExceptionHandlers === 'function') {
+    if (
+      logger &&
+      typeof (logger as any).removeExceptionHandlers === 'function'
+    ) {
       (logger as any).removeExceptionHandlers();
     }
   });

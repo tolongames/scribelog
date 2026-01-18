@@ -895,7 +895,7 @@ export class Scribelog implements LoggerInterface {
     if (this.options.rateLimit) {
       const { maxPerSecond, window = 1000 } = this.options.rateLimit;
       const now = Date.now();
-      
+
       // Check if we're in a new window
       if (now - this.rateLimitWindow >= window) {
         this.resetRateLimit();
@@ -951,7 +951,9 @@ export class Scribelog implements LoggerInterface {
       if (this.levels[options.level] !== undefined) {
         this.level = options.level;
       } else {
-        console.warn(`[scribelog] Unknown level "${options.level}" in updateOptions`);
+        console.warn(
+          `[scribelog] Unknown level "${options.level}" in updateOptions`
+        );
       }
     }
 
@@ -967,12 +969,18 @@ export class Scribelog implements LoggerInterface {
 
     // Update defaultMeta if provided
     if (options.defaultMeta) {
-      this.defaultMeta = { ...(this.defaultMeta || {}), ...options.defaultMeta };
+      this.defaultMeta = {
+        ...(this.defaultMeta || {}),
+        ...options.defaultMeta,
+      };
     }
 
     // Update profiler options if provided
     if (options.profiler) {
-      this.profilerOptions = { ...(this.profilerOptions || {}), ...options.profiler };
+      this.profilerOptions = {
+        ...(this.profilerOptions || {}),
+        ...options.profiler,
+      };
     }
 
     // Update sampler if provided
