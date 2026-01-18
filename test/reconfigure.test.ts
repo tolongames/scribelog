@@ -251,7 +251,7 @@ describe('Runtime Reconfiguration', () => {
       expect(capture2.entries.length).toBe(1);
     });
 
-    test('can update format via updateOptions', () => {
+    test('can update defaultMeta via updateOptions', () => {
       logger = new Scribelog({
         level: 'info',
         transports: [capture1],
@@ -268,6 +268,41 @@ describe('Runtime Reconfiguration', () => {
       const entries = capture1.entries as Array<Record<string, any>>;
       expect(entries[0].formatted).toBe('v1');
       expect(entries[1].formatted).toBe('v2');
+    });
+
+    test('can update format via updateOptions (json <-> simple)', () => {
+      // Use a transport WITHOUT its own format to rely on logger.format
+      class NoFormatTransport implements Transport {
+        public entries: Array<Record<string, any> | string> = [];
+        log(entry: Record<string, any> | string): void {
+          this.entries.push(entry);
+        }
+      }
+
+      const t = new NoFormatTransport();
+
+      // Start with JSON format
+      logger = new Scribelog({
+        level: 'info',
+        transports: [t],
+        format: format.defaultJsonFormat,
+      });
+
+      logger.info('json message', { foo: 'bar' });
+      expect(typeof t.entries[0]).toBe('string');
+      expect((t.entries[0] as string).trim().startsWith('{')).toBe(true);
+      expect(t.entries[0] as string).toContain('"message":"json message"');
+
+      // Switch to simple format
+      logger.updateOptions({ format: format.defaultSimpleFormat });
+      logger.info('simple message');
+
+      expect(typeof t.entries[1]).toBe('string');
+      const s = t.entries[1] as string;
+      // Expect a human-readable line with level token rather than JSON
+      expect(s.startsWith('{')).toBe(false);
+      expect(s).toContain('[INFO]');
+      expect(s).toContain('simple message');
     });
 
     test('can update defaultMeta via updateOptions', () => {

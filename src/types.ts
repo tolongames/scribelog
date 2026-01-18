@@ -128,7 +128,6 @@ interface BaseLoggerInterface {
   level: LogLevel;
   levels: LogLevels;
   isLevelEnabled(level: LogLevel): boolean;
-  addTransport(transport: Transport): void;
   removeExceptionHandlers?(): void;
 
   dispose(): void;
