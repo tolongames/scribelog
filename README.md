@@ -33,9 +33,9 @@
 - **Logger Lifecycle:** Graceful shutdown via `logger.close()`; optional auto-close on `beforeExit`.
 - **Non-invasive Error Listeners:** Handlers are registered via `process.prependListener`/`process.on` (no removing foreign listeners), configurable modes.
 - **TypeScript First:** Written entirely in TypeScript for type safety and excellent editor autocompletion.
- - **Production Controls:** Built-in sampling and rate limiting to reduce noise and control throughput.
- - **AsyncBatch Backpressure:** `highWaterMark` with overflow policies (`drop-oldest`, `drop-newest`, `block`) and `droppedCount` metric.
- - **Runtime Reconfiguration:** Change level, transports, format, sampler, and rate limit at runtime via `updateOptions()` / `updateLevel()`.
+- **Production Controls:** Built-in sampling and rate limiting to reduce noise and control throughput.
+- **AsyncBatch Backpressure:** `highWaterMark` with overflow policies (`drop-oldest`, `drop-newest`, `block`) and `droppedCount` metric.
+- **Runtime Reconfiguration:** Change level, transports, format, sampler, and rate limit at runtime via `updateOptions()` / `updateLevel()`.
 
 ---
 

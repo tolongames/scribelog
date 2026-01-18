@@ -767,11 +767,11 @@ new transports.AsyncBatch(options: {
 - When the buffer reaches `batchSize`, all logs are flushed to the target transport.
 - If `flushIntervalMs` elapses before the buffer is full, the current buffer is flushed.
 - Calling `.close()` on the transport will flush any remaining logs and close the underlying target transport.
- - Backpressure: When `buffer.length >= highWaterMark`, apply `overflowPolicy`:
-   - `drop-oldest`: remove the oldest entry (preferred default for keeping recent data)
-   - `drop-newest`: reject the incoming entry
-   - `block`: accept all entries (unbounded growth; use with care)
-   The transport exposes `droppedCount` for visibility into pressure.
+- Backpressure: When `buffer.length >= highWaterMark`, apply `overflowPolicy`:
+  - `drop-oldest`: remove the oldest entry (preferred default for keeping recent data)
+  - `drop-newest`: reject the incoming entry
+  - `block`: accept all entries (unbounded growth; use with care)
+    The transport exposes `droppedCount` for visibility into pressure.
 
 **Example:**
 
@@ -802,7 +802,7 @@ logger.info('Second log');
 - You can wrap any transport (file, network, etc.) with `AsyncBatchTransport`.
 - If you set `immediate: true`, logs are passed through without batching.
 - Always call `.close()` on the transport during shutdown to ensure all logs are flushed.
- - Monitoring: read `asyncBatch.droppedCount` to track entries dropped due to backpressure.
+- Monitoring: read `asyncBatch.droppedCount` to track entries dropped due to backpressure.
 
 ### 7.7 Remote Transports (HTTP, WebSocket, TCP, UDP)
 
