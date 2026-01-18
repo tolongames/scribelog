@@ -45,6 +45,11 @@ export class Scribelog implements LoggerInterface {
   private exceptionHandler?: (err: Error) => void;
   private rejectionHandler?: (reason: any, _promise: Promise<any>) => void;
 
+  // Rate limiting state
+  private rateLimitCount = 0;
+  private rateLimitWindow = 0;
+  private rateLimitTimer?: NodeJS.Timeout;
+
   // Dodajemy sygnaturę indeksu, aby zadowolić dynamiczny interfejs LoggerInterface
   [level: string]: ((message: any, ...args: any[]) => void) | any;
 
@@ -303,6 +308,11 @@ export class Scribelog implements LoggerInterface {
       return true;
     }
     return false;
+  }
+
+  private resetRateLimit(): void {
+    this.rateLimitCount = 0;
+    this.rateLimitWindow = Date.now();
   }
 
   private makeProfileKey(label: string, meta?: Record<string, any>): string {
@@ -870,6 +880,50 @@ export class Scribelog implements LoggerInterface {
 
   // Metoda processAndTransport
   private processAndTransport(logEntry: LogInfo): void {
+    // Apply sampler if defined
+    if (typeof this.options.sampler === 'function') {
+      try {
+        if (!this.options.sampler(logEntry)) {
+          return; // Skip this log entry
+        }
+      } catch (e) {
+        console.warn('[scribelog] sampler function threw:', e);
+      }
+    }
+
+    // Apply rate limiting if defined
+    if (this.options.rateLimit) {
+      const { maxPerSecond, window = 1000 } = this.options.rateLimit;
+      const now = Date.now();
+
+      // Check if we're in a new window
+      if (now - this.rateLimitWindow >= window) {
+        this.resetRateLimit();
+        if (this.rateLimitTimer) {
+          clearTimeout(this.rateLimitTimer);
+          this.rateLimitTimer = undefined;
+        }
+      }
+
+      // Check if we've exceeded the rate limit
+      if (this.rateLimitCount >= maxPerSecond) {
+        return; // Drop this log entry
+      }
+
+      this.rateLimitCount++;
+
+      // Set timer to reset at end of window if not already set
+      if (!this.rateLimitTimer) {
+        this.rateLimitTimer = setTimeout(() => {
+          this.resetRateLimit();
+          this.rateLimitTimer = undefined;
+        }, window);
+        if (typeof (this.rateLimitTimer as any)?.unref === 'function') {
+          (this.rateLimitTimer as any).unref();
+        }
+      }
+    }
+
     for (const transport of this.transports) {
       if (this.isTransportLevelEnabled(transport, logEntry.level)) {
         const entryObject = { ...logEntry };
@@ -887,6 +941,80 @@ export class Scribelog implements LoggerInterface {
           console.error('[scribelog] Error in transport:', err);
         }
       }
+    }
+  }
+
+  // Runtime reconfiguration methods
+  public updateOptions(options: Partial<LoggerOptions>): void {
+    // Update level if provided
+    if (options.level !== undefined) {
+      if (this.levels[options.level] !== undefined) {
+        this.level = options.level;
+      } else {
+        console.warn(
+          `[scribelog] Unknown level "${options.level}" in updateOptions`
+        );
+      }
+    }
+
+    // Update transports if provided
+    if (Array.isArray(options.transports)) {
+      this.transports = options.transports;
+    }
+
+    // Update format if provided
+    if (options.format) {
+      this.format = options.format;
+    }
+
+    // Update defaultMeta if provided
+    if (options.defaultMeta) {
+      this.defaultMeta = {
+        ...(this.defaultMeta || {}),
+        ...options.defaultMeta,
+      };
+    }
+
+    // Update profiler options if provided
+    if (options.profiler) {
+      this.profilerOptions = {
+        ...(this.profilerOptions || {}),
+        ...options.profiler,
+      };
+    }
+
+    // Update sampler if provided
+    if (options.sampler !== undefined) {
+      this.options.sampler = options.sampler;
+    }
+
+    // Update rateLimit if provided
+    if (options.rateLimit !== undefined) {
+      this.options.rateLimit = options.rateLimit;
+      // Reset rate limit counters when updating
+      this.resetRateLimit();
+      if (this.rateLimitTimer) {
+        clearTimeout(this.rateLimitTimer);
+        this.rateLimitTimer = undefined;
+      }
+    }
+
+    // Update other stored options
+    this.options = { ...this.options, ...options };
+  }
+
+  public updateLevel(level: LogLevel): void {
+    if (this.levels[level] !== undefined) {
+      this.level = level;
+    } else {
+      console.warn(`[scribelog] Unknown level "${level}" in updateLevel`);
+    }
+  }
+
+  public removeTransport(transport: Transport): void {
+    const index = this.transports.indexOf(transport);
+    if (index > -1) {
+      this.transports.splice(index, 1);
     }
   }
 

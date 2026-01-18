@@ -74,6 +74,11 @@ export interface LoggerOptions {
   rejectionHandlerMode?: 'prepend' | 'append';
   autoCloseOnBeforeExit?: boolean;
   shareTransports?: boolean;
+  sampler?: (entry: Record<string, any>) => boolean;
+  rateLimit?: {
+    maxPerSecond: number;
+    window?: number; // window size in ms, default 1000
+  };
   profiler?: {
     level?: LogLevel;
     thresholdWarnMs?: number;
@@ -123,7 +128,6 @@ interface BaseLoggerInterface {
   level: LogLevel;
   levels: LogLevels;
   isLevelEnabled(level: LogLevel): boolean;
-  addTransport(transport: Transport): void;
   removeExceptionHandlers?(): void;
 
   dispose(): void;
@@ -131,6 +135,12 @@ interface BaseLoggerInterface {
   close(): Promise<void>;
 
   child(defaultMeta: Record<string, any>): LoggerInterface;
+
+  // Runtime reconfiguration
+  updateOptions(options: Partial<LoggerOptions>): void;
+  updateLevel(level: LogLevel): void;
+  addTransport(transport: Transport): void;
+  removeTransport(transport: Transport): void;
 
   // Zwracamy uchwyt, aby uniknąć kolizji
   profile(label: string, meta?: Record<string, any>): ProfileHandle;

@@ -33,6 +33,9 @@
 - **Logger Lifecycle:** Graceful shutdown via `logger.close()`; optional auto-close on `beforeExit`.
 - **Non-invasive Error Listeners:** Handlers are registered via `process.prependListener`/`process.on` (no removing foreign listeners), configurable modes.
 - **TypeScript First:** Written entirely in TypeScript for type safety and excellent editor autocompletion.
+- **Production Controls:** Built-in sampling and rate limiting to reduce noise and control throughput.
+- **AsyncBatch Backpressure:** `highWaterMark` with overflow policies (`drop-oldest`, `drop-newest`, `block`) and `droppedCount` metric.
+- **Runtime Reconfiguration:** Change level, transports, format, sampler, and rate limit at runtime via `updateOptions()` / `updateLevel()`.
 
 ---
 
@@ -257,6 +260,9 @@ const asyncBatch = new transports.AsyncBatch({
   target: fileTransport,
   batchSize: 5, // Send logs in batches of 5
   flushIntervalMs: 2000, // Or every 2 seconds
+  // NEW: backpressure controls
+  highWaterMark: 1000, // default
+  overflowPolicy: 'drop-oldest', // default policy when buffer is full
 });
 
 const logger = createLogger({ transports: [asyncBatch] });
@@ -303,6 +309,58 @@ logger.info('User login', {
   profile: { apiKey: 'xyz' },
 });
 // Output (example): password: '***', token: '***', profile: { apiKey: '***' }
+```
+
+## 🎛️ Production Controls (Quick Examples)
+
+Keep logs useful and the system stable under load with sampling, rate limiting, backpressure, and hot reconfiguration.
+
+- Sampling & Rate Limiting:
+
+```ts
+import { createLogger } from 'scribelog';
+
+const logger = createLogger({
+  // Allow only error/warn or ~10% of everything else
+  sampler: (entry) => entry.level === 'error' || Math.random() < 0.1,
+  rateLimit: { maxPerSecond: 200, window: 1000 },
+});
+
+for (let i = 0; i < 1000; i++) {
+  logger.info('burst log', { i }); // sampler + rate limit applied
+}
+```
+
+- AsyncBatch Backpressure:
+
+```ts
+import { createLogger, transports } from 'scribelog';
+
+const fileTransport = new transports.File({ filename: 'batched.log' });
+const batched = new transports.AsyncBatch({
+  target: fileTransport,
+  batchSize: 50,
+  flushIntervalMs: 500,
+  highWaterMark: 500,
+  overflowPolicy: 'drop-oldest',
+});
+
+const logger = createLogger({ transports: [batched] });
+logger.info('will be batched');
+```
+
+- Runtime Reconfigure:
+
+```ts
+// Switch to quiet production mode
+logger.updateOptions({ level: 'error' });
+
+// Redirect logs to another transport without restart
+logger.removeTransport(oldTransport);
+logger.addTransport(newTransport);
+
+// Enable sampling on the fly under heavy load
+logger.updateOptions({ sampler: (e) => Math.random() < 0.2 });
 ```
 
 ## Framework adapters (quick integration)

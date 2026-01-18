@@ -7,6 +7,8 @@ export interface AsyncBatchTransportOptions {
   immediate?: boolean;
   level?: LogLevel;
   format?: LogFormat;
+  highWaterMark?: number; // max buffer size before applying overflow policy
+  overflowPolicy?: 'block' | 'drop-oldest' | 'drop-newest'; // default: 'drop-oldest'
 }
 
 export class AsyncBatchTransport implements Transport {
@@ -19,6 +21,9 @@ export class AsyncBatchTransport implements Transport {
   private buffer: (Record<string, any> | string)[] = [];
   private timer: NodeJS.Timeout | null = null;
   private closed = false;
+  private highWaterMark: number;
+  private overflowPolicy: 'block' | 'drop-oldest' | 'drop-newest';
+  private _droppedCount = 0;
 
   constructor(options: AsyncBatchTransportOptions) {
     this.target = options.target;
@@ -27,6 +32,12 @@ export class AsyncBatchTransport implements Transport {
     this.batchSize = options.batchSize ?? 10;
     this.flushIntervalMs = options.flushIntervalMs ?? 1000;
     this.immediate = !!options.immediate;
+    this.highWaterMark = options.highWaterMark ?? 1000;
+    this.overflowPolicy = options.overflowPolicy ?? 'drop-oldest';
+  }
+
+  get droppedCount(): number {
+    return this._droppedCount;
   }
 
   log(entry: Record<string, any> | string): void {
@@ -35,6 +46,19 @@ export class AsyncBatchTransport implements Transport {
       this.target.log(entry);
       return;
     }
+
+    // Check if we're at highWaterMark
+    if (this.buffer.length >= this.highWaterMark) {
+      if (this.overflowPolicy === 'drop-oldest') {
+        this.buffer.shift(); // remove oldest
+        this._droppedCount++;
+      } else if (this.overflowPolicy === 'drop-newest') {
+        this._droppedCount++;
+        return; // drop the new entry
+      }
+      // 'block' policy: we still push (effectively unbounded growth)
+    }
+
     this.buffer.push(entry);
     if (this.buffer.length >= this.batchSize) {
       this.flush();
