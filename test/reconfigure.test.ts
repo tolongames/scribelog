@@ -305,7 +305,7 @@ describe('Runtime Reconfiguration', () => {
       expect(s).toContain('simple message');
     });
 
-    test('can update defaultMeta via updateOptions', () => {
+    test('merges new defaultMeta with existing defaultMeta via updateOptions', () => {
       logger = new Scribelog({
         level: 'info',
         transports: [capture1],
